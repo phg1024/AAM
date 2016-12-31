@@ -34,25 +34,31 @@ vector<pair<string, string>> ParseSettingsFile(const string& filename) {
   return image_points_filenames;
 }
 
-Eigen::Matrix2d ReadPoints(const string& filename) {
+Eigen::MatrixX2d ReadPoints(const string& filename) {
   ifstream fin(filename);
   int npoints;
   fin >> npoints;
-  Eigen::Matrix2d pts(npoints, 2);
+  cout << "reading " << npoints << " points ..." << endl;
+  Eigen::MatrixX2d pts(npoints, 2);
   for(int i=0;i<npoints;++i) {
     fin >> pts(i, 0) >> pts(i, 1);
   }
+
   return pts;
 }
 
-pair<QImage, Eigen::Matrix2d> LoadImagePointsPair(
+pair<QImage, Eigen::MatrixX2d> LoadImagePointsPair(
   const string& image_filename,
   const string& points_filename
 ) {
   QImage img(image_filename.c_str());
   cout << "image size: " << img.width() << "x" << img.height() << endl;
 
-  Eigen::Matrix2d pts = ReadPoints(points_filename);
+  Eigen::MatrixX2d pts = ReadPoints(points_filename);
   cout << "number of points: " << pts.rows() << endl;
+
+  // Convert points to 0-based coordinates
+  pts -= Eigen::MatrixX2d::Ones(pts.rows(), 2);
+
   return make_pair(img, pts);
 }
