@@ -69,13 +69,29 @@ void AAMModel::Preprocess() {
   // Compute mean texture
   meantexture = ComputeMeanTexture(images, shapes, meanshape);
 
-#if 0
+#if 1
+  cv::namedWindow("mean texture", cv::WINDOW_NORMAL);
   Mat img = meantexture.clone();
   DrawMesh(img, triangles, meanshape);
   DrawShape(img, meanshape);
   cv::imshow("mean texture", img);
   cv::waitKey();
 #endif
+
+  // Put all texels into a Mat
+  int ntexels = accumulate(pixel_counts.begin(), pixel_counts.end(), 0);
+  textures = cv::Mat(nimages, ntexels, CV_64FC3);
+  for(int i=0;i<nimages;++i) {
+    int offset = 0;
+    for(int j=0;j<pixel_counts.size();++j) {
+      for(int k=0;k<pixel_coords[j].size();++k) {
+        // collect the texels
+        auto pix_coord = pixel_coords[j][k];
+        textures.at<cv::Vec3d>(i, offset+k) = warped_images[i].at<cv::Vec3d>(pix_coord[0], pix_coord[1]);
+      }
+      offset += pixel_counts[j];
+    }
+  }
 }
 
 Mat AAMModel::AlignShape(const Mat& from_shape, const Mat& to_shape) {
@@ -312,13 +328,61 @@ Mat AAMModel::ComputeMeanTexture(const vector<Mat>& images,
 }
 
 void AAMModel::BuildModel(vector<int> indices) {
-  vector<int> imgindices;
   if(indices.empty()) {
     indices.resize(input_images.size());
     std::iota(indices.begin(), indices.end(), 0);
   }
 
-  int nimages = imgindices.size();
+  int nimages = indices.size();
 
   // Construct shape and texture model with the provided indices
+  cv::PCA shape_model, texture_model;
+  {
+    boost::timer::auto_cpu_timer t("AAM model constructed in %w seconds.\n");
+    shape_model = shape_model(shapes, Mat(), CV_PCA_DATA_AS_ROW, 0.98);
+    texture_model = texture_model(textures.reshape(1), Mat(), CV_PCA_DATA_AS_ROW, 0.98);
+  }
+
+#if 1
+  cout << textures.rows << 'x' << textures.cols << endl;
+  cout << texture_model.mean.rows << 'x' << texture_model.mean.cols << endl;
+
+  vector<double> diffs(nimages);
+  vector<Mat> reconstructions(nimages);
+  for(int i=0;i<nimages;++i) {
+    Mat coeffs(1, texture_model.mean.cols, texture_model.mean.type()), reconstructed;
+    Mat vec = textures.row(i);
+    texture_model.project(vec.reshape(1), coeffs);
+    texture_model.backProject(coeffs, reconstructed);
+    reconstructed = reconstructed.reshape(3);
+    diffs[i] = cv::norm(vec, reconstructed, cv::NORM_L2);
+    reconstructions[i] = reconstructed;
+    printf("%d. diff = %g\n", i, diffs[i]);
+  }
+
+  auto max_it = max_element(diffs.begin(), diffs.end());
+  auto max_idx = distance(diffs.begin(), max_it);
+
+  cout << "max idx = " << max_idx << endl;
+
+    // Fill the image
+  auto fill_image = [&](const Mat& tex, Mat& img) {
+    for(int j=0, offset=0;j<pixel_coords.size();++j) {
+      for(int k=0; k<pixel_coords[j].size(); ++k) {
+        auto pix = pixel_coords[j][k];
+        img.at<cv::Vec3d>(pix[0], pix[1]) = tex.at<cv::Vec3d>(0, offset+k);
+      }
+      offset += pixel_counts[j];
+    }
+  };
+
+  cv::Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+  fill_image(reconstructions[max_idx], img);
+  cv::imshow("outlier", img);
+
+  cv::Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+  fill_image(textures.row(max_idx), img_ref);
+  cv::imshow("ref", img_ref);
+  cv::waitKey();
+#endif
 }
