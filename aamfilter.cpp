@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
 
   int nentries = image_points_filenames.size();
   vector<QImage> images(nentries);
-  vector<Eigen::MatrixX2d> points(nentries);
+  vector<cv::Mat> points(nentries);
 
   for(auto& p : enumerate(image_points_filenames)) {
     fs::path image_filename = settings_filepath.parent_path() / fs::path(p.second.first);
@@ -54,6 +54,7 @@ int main(int argc, char** argv) {
   }
 
   AAMModel model(images, points);
-
+  model.BuildModel();
+  
   return 0;
 }

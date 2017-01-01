@@ -19,6 +19,7 @@
 // OpenCV stuff
 #include "opencv2/highgui/highgui.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
+#include "opencv2/video/video.hpp"
 
 // Qt Stuff
 #include <QImage>
@@ -30,5 +31,3 @@
 #include "boost/filesystem/path.hpp"
 #include "boost/program_options.hpp"
 #include "boost/timer/timer.hpp"
-
-

@@ -1,9 +1,15 @@
 #include "aammodel.h"
 #include "utils.h"
+#include "ioutils.h"
 
 using namespace std;
 
-AAMModel::AAMModel(const std::vector<QImage>& images, const std::vector<Eigen::MatrixX2d>& points)
+using Eigen::VectorXd;
+using Eigen::MatrixXd;
+
+using cv::Mat;
+
+AAMModel::AAMModel(const std::vector<QImage>& images, const std::vector<Mat>& points)
   : input_images(images), input_points(points) {
   Preprocess();
 }
@@ -12,7 +18,7 @@ void AAMModel::Preprocess() {
   boost::timer::auto_cpu_timer t("Preprocessing finished in %w seconds.\n");
 
   const int nimages = input_images.size();
-  const int npoints = input_points.front().rows();
+  const int npoints = input_points.front().rows;
 
   // Convert input images to opencv Mat
   images.resize(nimages);
@@ -27,28 +33,289 @@ void AAMModel::Preprocess() {
   }
 
   // Collect all input shapes
-  shapes = Eigen::MatrixXd(nimages, npoints*2);
+  shapes = Mat(nimages, npoints*2, CV_64FC1);
   for(int i=0;i<nimages;++i) {
-    Eigen::MatrixXd points_i_T = input_points[i].transpose();
-    shapes.row(i) = Eigen::Map<Eigen::RowVectorXd>(points_i_T.data(), points_i_T.size());
+    Mat ptsT = input_points[i];
+    Mat row_i = ptsT.reshape(1, 1).clone();
+    row_i.copyTo(shapes.row(i));
 
 #if 0
     // For debugging
     cout << shapes.row(i) << endl;
-    cv::Mat img_i = images[i].clone();
-    for(int j=0;j<npoints;++j) {
-      cv::circle(img_i, cv::Point(shapes(i, j*2), shapes(i, j*2+1)), 1, cv::Scalar( 0, 255, 0));
-    }
+    Mat img_i = images[i].clone();
+    DrawShape(img_i, shapes.row(i));
     cv::imshow("image", img_i);
     cv::waitKey();
 #endif
   }
+
+  triangles = LoadTriangulation("/home/phg/Data/Multilinear/landmarks_triangulation.dat");
+  // Convert to 0-based indexing
+  std::for_each(triangles.begin(), triangles.end(), [](cv::Vec3i& v) { v -= cv::Vec3i(1, 1, 1); });
 }
 
-void AAMModel::BuildModel(const vector<int>& indices) {
+Mat AAMModel::AlignShape(const Mat& from_shape, const Mat& to_shape) {
+  Mat aligned_shape;
+
+#if 0
+  cout << "from: " << from_shape << endl;
+  cout << "to: " << to_shape << endl;
+  PAUSE();
+#endif
+
+  const int npoints = from_shape.cols / 2;
+
+  auto from_points = CVMat2Points(from_shape);
+  auto to_points = CVMat2Points(to_shape);
+
+#if 0
+  Mat tform = cv::estimateRigidTransform(from_points, to_points, false);
+#else
+  Mat tform = EstimateRigidTransform(from_shape, to_shape);
+#endif
+
+#if 0
+  cout << tform << endl;
+  PAUSE();
+#endif
+
+  cv::transform(from_shape.reshape(2), aligned_shape, tform);
+  aligned_shape = aligned_shape.reshape(1);
+
+#if 0
+  cout << aligned_shape << endl;
+  PAUSE();
+#endif
+
+
+  return aligned_shape;
+}
+
+Mat AAMModel::ScaleShape(const Mat& shape, double size) {
+  const int npoints = shape.cols / 2;
+
+  Mat s = shape.clone();
+
+  double max_x = -1e6;
+  double min_x = 1e6;
+  double max_y = -1e6;
+  double min_y = 1e6;
+
+  for(int j=0;j<npoints;++j) {
+    double x = shape.at<double>(0, j*2);
+    double y = shape.at<double>(0, j*2+1);
+
+    max_x = max(max_x, x); min_x = min(min_x, x);
+    max_y = max(max_y, y); min_y = min(min_y, y);
+  }
+
+  double center_x = 0.5 * (max_x + min_x);
+  double center_y = 0.5 * (max_y + min_y);
+
+  double xrange = max_x - min_x;
+  double yrange = max_y - min_y;
+
+  double factor = 0.95 * size / max(xrange, yrange);
+
+  for(int j=0;j<npoints;++j) {
+    double x = s.at<double>(0, j*2);
+    double y = s.at<double>(0, j*2+1);
+
+    s.at<double>(0, j*2) = (x - center_x) * factor + size * 0.5;
+    s.at<double>(0, j*2+1) = (y - center_y) * factor + size * 0.5;
+  }
+  return s;
+}
+
+Mat AAMModel::ComputeMeanShape(const Mat& shapes) {
+  const int npoints = shapes.cols / 2;
+  const int nimages = images.size();
+
+  Mat meanshape = Mat::zeros(1, npoints*2, CV_64FC1);
+  for(int j=0;j<nimages;++j) meanshape += shapes.row(j);
+  meanshape /= nimages;
+  meanshape = ScaleShape(meanshape, 250);
+
+  const int max_iters = 100;
+
+  for(int iter=0;iter<max_iters;++iter) {
+    Mat new_meanshape = Mat::zeros(1, npoints*2, CV_64FC1);
+    for(int j=0;j<nimages;++j) {
+      new_meanshape = new_meanshape + AlignShape(shapes.row(j), meanshape);
+    }
+    new_meanshape /= nimages;
+    new_meanshape = ScaleShape(new_meanshape, 250);
+    double norm = cv::norm(new_meanshape - meanshape);
+    cout << "iter " << iter << ": Diff = " << norm << endl;
+    meanshape = new_meanshape;
+
+#if 0
+    Mat img(250, 250, CV_8UC3, cv::Scalar(0, 0, 0));
+    DrawShapeWithIndex(img, meanshape);
+    cv::imshow("meanshape", img);
+    cv::waitKey();
+#endif
+
+    if(norm < 1e-3) break;
+  }
+
+  return meanshape;
+}
+
+Mat AAMModel::ComputeMeanTexture(const vector<Mat>& images,
+                                 const Mat& shapes,
+                                 const Mat& meanshape) {
+
+  const int nimages = images.size();
+  const int npoints = meanshape.cols / 2;
+  const int ntriangles = triangles.size();
+  const int w = images.front().cols;
+  const int h = images.front().rows;
+
+  auto get_point = [&](const Mat& shape, int idx) {
+    return cv::Point2f(shape.at<double>(0, idx*2),
+                       shape.at<double>(0, idx*2+1));
+  };
+
+  vector<cv::Point2f> meanshape_verts(npoints);
+  for(int i=0;i<npoints;++i) {
+    meanshape_verts[i] = get_point(meanshape, i);
+  }
+
+  tforms.resize(nimages, vector<Mat>(ntriangles));
+  tforms_inv.resize(nimages, vector<Mat>(ntriangles));
+
+  for(int j=0;j<ntriangles;++j) {
+    const int vj0 = triangles[j][0];
+    const int vj1 = triangles[j][1];
+    const int vj2 = triangles[j][2];
+
+    cv::Point2f mv0 = meanshape_verts[vj0];
+    cv::Point2f mv1 = meanshape_verts[vj1];
+    cv::Point2f mv2 = meanshape_verts[vj2];
+
+    for(int i=0;i<nimages;++i) {
+      cv::Point2f v0 = get_point(shapes.row(i), vj0);
+      cv::Point2f v1 = get_point(shapes.row(i), vj1);
+      cv::Point2f v2 = get_point(shapes.row(i), vj2);
+
+      tforms[i][j] = cv::getAffineTransform(vector<cv::Point2f>{v0, v1, v2},
+                                            vector<cv::Point2f>{mv0, mv1, mv2});
+      cv::invertAffineTransform(tforms[i][j], tforms_inv[i][j]);
+    }
+  }
+
+  // Create pixel map in the texture space
+  const int tri_id_offset = 128;
+  pixel_map = Mat(h, w, CV_8UC1, cv::Scalar(0));
+  for(int j=0;j<ntriangles;++j) {
+    const int vj0 = triangles[j][0];
+    const int vj1 = triangles[j][1];
+    const int vj2 = triangles[j][2];
+
+    FillTriangle(pixel_map, meanshape_verts[vj0], meanshape_verts[vj1], meanshape_verts[vj2], cv::Scalar(j+tri_id_offset));
+  }
+
+#if 0
+  cv::imshow("pixel map", pixel_map);
+  cv::waitKey();
+#endif
+
+  // Count the number of pixels we need to process
+  pixel_counts.resize(ntriangles, 0);
+  pixel_coords.resize(ntriangles);
+  for(int i=0;i<h;++i) {
+    for(int j=0;j<w;++j) {
+      int tri_id = static_cast<int>(pixel_map.at<unsigned char>(i, j)) - tri_id_offset;
+      if(tri_id >= 0) {
+        ++pixel_counts[tri_id];
+        pixel_coords[tri_id].push_back(cv::Vec2i(i, j));
+      }
+    }
+  }
+
+  // Create the list of points we need to project back
+  pixel_mats.resize(ntriangles);
+  for(int j=0;j<ntriangles;++j) {
+    pixel_mats[j] = cv::Mat(pixel_counts[j], 2, CV_32FC1);
+    for(int k=0;k<pixel_counts[j];++k) {
+      auto pix_coord = pixel_coords[j][k];
+      pixel_mats[j].at<float>(k, 0) = pix_coord[1];
+      pixel_mats[j].at<float>(k, 1) = pix_coord[0];
+    }
+  }
+
+  // Warp the input images to the meanshape space
+  warped_images.resize(nimages);
+
+  for(int i=0;i<nimages;++i) {
+    warped_images[i] = Mat(h, w, CV_64FC3, cv::Scalar(0, 0, 0));
+    for(int j=0;j<ntriangles;++j) {
+      // project back the points to input image space
+      cv::Mat pts;
+      cv::transform(pixel_mats[j].reshape(2), pts, tforms_inv[i][j]);
+      pts = pts.reshape(1, 1);
+
+      for(int k=0;k<pixel_counts[j];++k) {
+        auto pix_coord = pixel_coords[j][k];
+
+        cv::Vec3d sample = SampleImage(images[i], cv::Point2f(pts.at<float>(0,k*2), pts.at<float>(0,k*2+1)));
+
+        warped_images[i].at<cv::Vec3d>(pix_coord[0], pix_coord[1])
+          = sample;
+      }
+    }
+
+#if 0
+    cv::imshow("warped", warped_images[i]);
+    cv::waitKey(25);
+#endif
+  }
+
+  Mat meantexture(h, w, CV_64FC3, cv::Scalar(0, 0, 0));
+  for(int i=0;i<nimages;++i) {
+    meantexture += warped_images[i];
+#if 0
+    cout << i << endl;
+    cv::imshow("warped", warped_images[i]);
+    cv::imshow("meantexture", meantexture / (i+1));
+    cv::waitKey();
+#endif
+  }
+  meantexture /= nimages;
+
+  return meantexture;
+}
+
+void AAMModel::BuildModel(vector<int> indices) {
+  vector<int> imgindices;
+  if(indices.empty()) {
+    indices.resize(input_images.size());
+    std::iota(indices.begin(), indices.end(), 0);
+  }
+
+  int nimages = imgindices.size();
+
   // Compute mean shape
+  cv::Mat meanshape = ComputeMeanShape(shapes);
+
+#if 0
+  // For debugging
+  cout << "Drawing mesh ..." << endl;
+  Mat img(250, 250, CV_8UC3, cv::Scalar(0, 0, 0));
+  DrawMesh(img, triangles, meanshape);
+  DrawShape(img, meanshape);
+  cv::imshow("meanshape", img);
+  cv::waitKey();
+#endif
 
   // Compute mean texture
+  cv::Mat meantexture = ComputeMeanTexture(images, shapes, meanshape);
+
+#if 1
+  cv::imshow("mean texture", meantexture);
+  cv::waitKey();
+#endif
 
   // Construct shape and texture model
 }
