@@ -40,4 +40,6 @@ private:
   std::vector<int> pixel_counts;
   std::vector<std::vector<cv::Vec2i>> pixel_coords;
   std::vector<cv::Mat> pixel_mats;
+
+  cv::Mat meanshape, meantexture;
 };

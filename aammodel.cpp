@@ -52,6 +52,30 @@ void AAMModel::Preprocess() {
   triangles = LoadTriangulation("/home/phg/Data/Multilinear/landmarks_triangulation.dat");
   // Convert to 0-based indexing
   std::for_each(triangles.begin(), triangles.end(), [](cv::Vec3i& v) { v -= cv::Vec3i(1, 1, 1); });
+
+  // Compute mean shape
+  meanshape = ComputeMeanShape(shapes);
+
+#if 0
+  // For debugging
+  cout << "Drawing mesh ..." << endl;
+  Mat img(250, 250, CV_8UC3, cv::Scalar(0, 0, 0));
+  DrawMesh(img, triangles, meanshape);
+  DrawShape(img, meanshape);
+  cv::imshow("meanshape", img);
+  cv::waitKey();
+#endif
+
+  // Compute mean texture
+  meantexture = ComputeMeanTexture(images, shapes, meanshape);
+
+#if 0
+  Mat img = meantexture.clone();
+  DrawMesh(img, triangles, meanshape);
+  DrawShape(img, meanshape);
+  cv::imshow("mean texture", img);
+  cv::waitKey();
+#endif
 }
 
 Mat AAMModel::AlignShape(const Mat& from_shape, const Mat& to_shape) {
@@ -296,26 +320,5 @@ void AAMModel::BuildModel(vector<int> indices) {
 
   int nimages = imgindices.size();
 
-  // Compute mean shape
-  cv::Mat meanshape = ComputeMeanShape(shapes);
-
-#if 0
-  // For debugging
-  cout << "Drawing mesh ..." << endl;
-  Mat img(250, 250, CV_8UC3, cv::Scalar(0, 0, 0));
-  DrawMesh(img, triangles, meanshape);
-  DrawShape(img, meanshape);
-  cv::imshow("meanshape", img);
-  cv::waitKey();
-#endif
-
-  // Compute mean texture
-  cv::Mat meantexture = ComputeMeanTexture(images, shapes, meanshape);
-
-#if 1
-  cv::imshow("mean texture", meantexture);
-  cv::waitKey();
-#endif
-
-  // Construct shape and texture model
+  // Construct shape and texture model with the provided indices
 }
