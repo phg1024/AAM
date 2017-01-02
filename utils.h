@@ -155,3 +155,15 @@ inline cv::Vec3d SampleImage(const cv::Mat& I, const cv::Point2f& p) {
        + I.at<cv::Vec3d>(y1, x0) * (1.0 - dx) * (dy)
        + I.at<cv::Vec3d>(y1, x1) * (dx)       * (dy);
 }
+
+inline void FillImage(const cv::Mat& tex,
+                       const std::vector<std::vector<cv::Vec2i>>& pixel_coords,
+                       cv::Mat& img) {
+  for(int j=0, offset=0;j<pixel_coords.size();++j) {
+    for(int k=0; k<pixel_coords[j].size(); ++k) {
+      auto pix = pixel_coords[j][k];
+      img.at<cv::Vec3d>(pix[0], pix[1]) = tex.at<cv::Vec3d>(0, offset+k);
+    }
+    offset += pixel_coords[j].size();
+  }
+};

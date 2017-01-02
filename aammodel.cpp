@@ -71,27 +71,13 @@ void AAMModel::Preprocess() {
 
 #if 1
   cv::namedWindow("mean texture", cv::WINDOW_NORMAL);
-  Mat img = meantexture.clone();
+  Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+  FillImage(meantexture + 0.5, pixel_coords, img);
   DrawMesh(img, triangles, meanshape);
   DrawShape(img, meanshape);
   cv::imshow("mean texture", img);
   cv::waitKey();
 #endif
-
-  // Put all texels into a Mat
-  int ntexels = accumulate(pixel_counts.begin(), pixel_counts.end(), 0);
-  textures = cv::Mat(nimages, ntexels, CV_64FC3);
-  for(int i=0;i<nimages;++i) {
-    int offset = 0;
-    for(int j=0;j<pixel_counts.size();++j) {
-      for(int k=0;k<pixel_coords[j].size();++k) {
-        // collect the texels
-        auto pix_coord = pixel_coords[j][k];
-        textures.at<cv::Vec3d>(i, offset+k) = warped_images[i].at<cv::Vec3d>(pix_coord[0], pix_coord[1]);
-      }
-      offset += pixel_counts[j];
-    }
-  }
 }
 
 Mat AAMModel::AlignShape(const Mat& from_shape, const Mat& to_shape) {
@@ -312,17 +298,59 @@ Mat AAMModel::ComputeMeanTexture(const vector<Mat>& images,
 #endif
   }
 
-  Mat meantexture(h, w, CV_64FC3, cv::Scalar(0, 0, 0));
+  // Put all texels into a Mat
+  int ntexels = accumulate(pixel_counts.begin(), pixel_counts.end(), 0);
+  textures = Mat(nimages, ntexels, CV_64FC3);
   for(int i=0;i<nimages;++i) {
-    meantexture += warped_images[i];
+    int offset = 0;
+    for(int j=0;j<pixel_counts.size();++j) {
+      for(int k=0;k<pixel_coords[j].size();++k) {
+        // collect the texels
+        auto pix_coord = pixel_coords[j][k];
+        textures.at<cv::Vec3d>(i, offset+k) = warped_images[i].at<cv::Vec3d>(pix_coord[0], pix_coord[1]);
+      }
+      offset += pixel_counts[j];
+    }
+  }
+
 #if 0
+  Mat mean_warped_image(h, w, CV_64FC3, cv::Scalar(0, 0, 0));
+  for(int i=0;i<nimages;++i) {
+    mean_warped_image += warped_images[i];
     cout << i << endl;
     cv::imshow("warped", warped_images[i]);
     cv::imshow("meantexture", meantexture / (i+1));
     cv::waitKey();
-#endif
   }
-  meantexture /= nimages;
+  mean_warped_image /= nimages;
+#endif
+
+  Mat meantexture;
+  cv::reduce(textures, meantexture, 0, CV_REDUCE_AVG);
+
+  // Iteratively compute the mean texture
+  const int max_iters = 100;
+  normalized_textures = Mat(nimages, ntexels, CV_64FC3);
+
+  for(int iter=0;iter<max_iters;++iter) {
+    Mat newmeantexture(1, ntexels, CV_64FC3, cv::Scalar(0, 0, 0));
+    for(int i=0;i<nimages;++i) {
+      double alpha_i = meantexture.dot(textures.row(i));
+      double beta_i = cv::mean(textures.row(i))[0];
+      normalized_textures.row(i) = (textures.row(i) - beta_i) / alpha_i;
+      newmeantexture += normalized_textures.row(i);
+    }
+    newmeantexture /= nimages;
+
+    double diff_iter = cv::norm(newmeantexture - meantexture);
+    printf("iter %d: %.6f, %.6f\n", iter, diff_iter, cv::norm(newmeantexture));
+    if(diff_iter < 1e-6) break;
+    const double lambda = 0.75;
+    meantexture = lambda * newmeantexture + (1.0 - lambda) * meantexture;
+  }
+
+  // subtract mean texture from the normalized textures
+  for(int i=0;i<nimages;++i) normalized_textures.row(i) -= meantexture;
 
   return meantexture;
 }
@@ -338,9 +366,12 @@ void AAMModel::BuildModel(vector<int> indices) {
   // Construct shape and texture model with the provided indices
   cv::PCA shape_model, texture_model;
   {
-    boost::timer::auto_cpu_timer t("AAM model constructed in %w seconds.\n");
+    boost::timer::auto_cpu_timer t("Shape model constructed in %w seconds.\n");
     shape_model = shape_model(shapes, Mat(), CV_PCA_DATA_AS_ROW, 0.98);
-    texture_model = texture_model(textures.reshape(1), Mat(), CV_PCA_DATA_AS_ROW, 0.98);
+  }
+  {
+    boost::timer::auto_cpu_timer t("Texture model constructed in %w seconds.\n");
+    texture_model = texture_model(normalized_textures.reshape(1), Mat(), CV_PCA_DATA_AS_ROW, 0.98);
   }
 
 #if 1
@@ -352,12 +383,34 @@ void AAMModel::BuildModel(vector<int> indices) {
   for(int i=0;i<nimages;++i) {
     Mat coeffs(1, texture_model.mean.cols, texture_model.mean.type()), reconstructed;
     Mat vec = textures.row(i);
-    texture_model.project(vec.reshape(1), coeffs);
+
+    // normalize it
+    double alpha_i = vec.dot(meantexture);
+    double beta_i = cv::mean(vec)[0];
+    Mat normalized_vec = (vec - beta_i) / alpha_i - meantexture;
+
+    texture_model.project(normalized_vec.reshape(1), coeffs);
     texture_model.backProject(coeffs, reconstructed);
     reconstructed = reconstructed.reshape(3);
-    diffs[i] = cv::norm(vec, reconstructed, cv::NORM_L2);
+
+    diffs[i] = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
+
+    // unnormalize it
+    reconstructed = (reconstructed + meantexture) * alpha_i + beta_i;
+
     reconstructions[i] = reconstructed;
     printf("%d. diff = %g\n", i, diffs[i]);
+
+#if 0
+    cv::Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+    FillImage(reconstructions[i], pixel_coords, img);
+    cv::imshow("outlier", img);
+
+    cv::Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+    FillImage(textures.row(i), pixel_coords, img_ref);
+    cv::imshow("ref", img_ref);
+    cv::waitKey();
+#endif
   }
 
   auto max_it = max_element(diffs.begin(), diffs.end());
@@ -365,23 +418,13 @@ void AAMModel::BuildModel(vector<int> indices) {
 
   cout << "max idx = " << max_idx << endl;
 
-    // Fill the image
-  auto fill_image = [&](const Mat& tex, Mat& img) {
-    for(int j=0, offset=0;j<pixel_coords.size();++j) {
-      for(int k=0; k<pixel_coords[j].size(); ++k) {
-        auto pix = pixel_coords[j][k];
-        img.at<cv::Vec3d>(pix[0], pix[1]) = tex.at<cv::Vec3d>(0, offset+k);
-      }
-      offset += pixel_counts[j];
-    }
-  };
-
+  // Fill the image
   cv::Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
-  fill_image(reconstructions[max_idx], img);
+  FillImage(reconstructions[max_idx], pixel_coords, img);
   cv::imshow("outlier", img);
 
   cv::Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
-  fill_image(textures.row(max_idx), img_ref);
+  FillImage(textures.row(max_idx) + meantexture, pixel_coords, img_ref);
   cv::imshow("ref", img_ref);
   cv::waitKey();
 #endif

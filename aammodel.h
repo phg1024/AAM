@@ -30,7 +30,7 @@ private:
   // Converted data
   std::vector<cv::Mat> images, warped_images;
   cv::Mat shapes;
-  cv::Mat textures;
+  cv::Mat textures, normalized_textures;
 
   std::vector<cv::Vec3i> triangles;
 
