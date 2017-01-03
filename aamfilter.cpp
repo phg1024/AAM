@@ -55,7 +55,20 @@ int main(int argc, char** argv) {
 
   AAMModel model(images, points);
   //model.BuildModel();
-  model.FindOutliers();
+
+  {
+    boost::timer::auto_cpu_timer t("Outlier detection finished in %w seconds.\n");
+    vector<int> indices;
+    while(true) {
+      int sz = indices.size();
+      {
+        boost::timer::auto_cpu_timer t("Iteration finished in %w seconds.\n");
+        indices = model.FindOutliers(indices);
+      }
+      if(sz == indices.size()) break;
+    }
+  }
+
 
   return 0;
 }

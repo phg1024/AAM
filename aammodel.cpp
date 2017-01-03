@@ -575,18 +575,21 @@ vector<int> AAMModel::FindOutliers(vector<int> indices) {
 
   set<int> res;
   for(int i=0;i<nimages;++i) {
-    if(diffs.at<double>(0, i) >= mean_diff[0] + 3 * stddev_diff[0]) {
+    if(diffs.at<double>(0, i) >= mean_diff[0] + 2 * stddev_diff[0]) {
       int max_idx = indices[i];
       cout << max_idx << endl;
-      // Fill the image
-      cv::Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
-      FillImage(reconstructions[max_idx], pixel_coords, img);
-      cv::imshow("outlier", img);
 
-      cv::Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+      Mat img_i = images[max_idx].clone();
+      DrawShape(img_i, shapes.row(max_idx));
+      cv::imwrite("image" + to_string(max_idx) + ".jpg", img_i * 255);
+
+      Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+      FillImage(reconstructions[i], pixel_coords, img);
+      cv::imwrite("image" + to_string(max_idx) + "_fitted_tex.jpg", img * 255);
+
+      Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
       FillImage(textures.row(max_idx) + meantexture, pixel_coords, img_ref);
-      cv::imshow("ref", img_ref);
-      cv::waitKey();
+      cv::imwrite("image" + to_string(max_idx) + "_warped.jpg", img_ref * 255);
     } else {
       res.insert(indices[i]);
     }
