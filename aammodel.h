@@ -2,46 +2,57 @@
 
 #include "common.h"
 
-class AAMModel {
-public:
-  AAMModel(){}
-  AAMModel(const std::vector<QImage>& images, const std::vector<cv::Mat>& points);
-  ~AAMModel(){}
+namespace aam {
+  class AAMModel {
+  public:
+    AAMModel();
+    AAMModel(const std::vector<QImage>& images, const std::vector<cv::Mat>& points);
+    ~AAMModel(){}
 
-  void BuildModel(std::vector<int> indices = std::vector<int>());
-  std::vector<int> FindOutliers(std::vector<int> indices = std::vector<int>());
+    void SetImages(const std::vector<QImage>& images);
+    void SetPoints(const std::vector<cv::Mat>& points);
 
-protected:
-  void Preprocess();
+    void Preprocess();
+    void ProcessImages();
+    void ProcessShapes();
+    void InitializeMeanShapeAndTexture();
 
-  cv::Mat ComputeMeanShape(const cv::Mat& shapes);
-  cv::Mat AlignShape(const cv::Mat& from_shape,
-                     const cv::Mat& to_shape);
-  cv::Mat ScaleShape(const cv::Mat& shape, double size);
+    void BuildModel(std::vector<int> indices = std::vector<int>());
+    std::vector<int> FindOutliers(std::vector<int> indices = std::vector<int>());
 
-  cv::Mat ComputeMeanTexture(const std::vector<cv::Mat>& images,
-                             const cv::Mat& shapes,
-                             const cv::Mat& meanshape);
+  protected:
+    void Init();
 
-private:
-  // Input data
-  std::vector<QImage> input_images;
-  std::vector<cv::Mat> input_points;
+    cv::Mat ComputeMeanShape(const cv::Mat& shapes);
+    cv::Mat AlignShape(const cv::Mat& from_shape,
+                       const cv::Mat& to_shape);
+    cv::Mat ScaleShape(const cv::Mat& shape, double size);
 
-  // Converted data
-  std::vector<cv::Mat> images, warped_images;
-  cv::Mat shapes;
-  cv::Mat textures, normalized_textures;
+    cv::Mat ComputeMeanTexture(const std::vector<cv::Mat>& images,
+                               const cv::Mat& shapes,
+                               const cv::Mat& meanshape);
 
-  std::vector<cv::Vec3i> triangles;
+  private:
+    // Input data
+    std::vector<QImage> input_images;
+    std::vector<cv::Mat> input_points;
 
-  // Affine transformation from each triangle to the meanshape in each image
-  std::vector<std::vector<cv::Mat>> tforms, tforms_inv;
+    // Converted data
+    std::vector<cv::Mat> images, warped_images;
+    cv::Mat shapes;
+    cv::Mat textures, normalized_textures;
 
-  cv::Mat pixel_map;
-  std::vector<int> pixel_counts;
-  std::vector<std::vector<cv::Vec2i>> pixel_coords;
-  std::vector<cv::Mat> pixel_mats;
+    std::vector<cv::Vec3i> triangles;
 
-  cv::Mat meanshape, meantexture;
-};
+    // Affine transformation from each triangle to the meanshape in each image
+    std::vector<std::vector<cv::Mat>> tforms, tforms_inv;
+
+    cv::Mat pixel_map;
+    std::vector<int> pixel_counts;
+    std::vector<std::vector<cv::Vec2i>> pixel_coords;
+    std::vector<cv::Mat> pixel_mats;
+
+    cv::Mat meanshape, meantexture;
+  };
+}
+

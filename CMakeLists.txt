@@ -64,10 +64,19 @@ target_link_libraries(ioutils
         Qt5::OpenGL
         Qt5::Test)
 
+add_library(aammodel aammodel.cpp)
+target_link_libraries(aammodel
+        ioutils
+        Qt5::Core
+        Qt5::Widgets
+        Qt5::OpenGL
+        Qt5::Test)
+
 # Single image reconstruction program
-add_executable(AAMFilter aamfilter.cpp aammodel.cpp aamfilter.cpp aammodel.cpp aammodel.h common.h ioutils.h utils.h)
+add_executable(AAMFilter aamfilter.cpp common.h ioutils.h utils.h)
 target_link_libraries(AAMFilter
         ioutils
+        aammodel
         Qt5::Core
         Qt5::Widgets
         Qt5::OpenGL

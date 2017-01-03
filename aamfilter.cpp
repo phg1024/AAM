@@ -5,6 +5,7 @@
 
 using namespace std;
 using namespace cv;
+using namespace aam;
 
 int main(int argc, char** argv) {
 
