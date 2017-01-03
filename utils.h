@@ -157,8 +157,8 @@ inline cv::Vec3d SampleImage(const cv::Mat& I, const cv::Point2f& p) {
 }
 
 inline void FillImage(const cv::Mat& tex,
-                       const std::vector<std::vector<cv::Vec2i>>& pixel_coords,
-                       cv::Mat& img) {
+                      const std::vector<std::vector<cv::Vec2i>>& pixel_coords,
+                      cv::Mat& img) {
   for(int j=0, offset=0;j<pixel_coords.size();++j) {
     for(int k=0; k<pixel_coords[j].size(); ++k) {
       auto pix = pixel_coords[j][k];
@@ -166,4 +166,27 @@ inline void FillImage(const cv::Mat& tex,
     }
     offset += pixel_coords[j].size();
   }
-};
+}
+
+inline void PrintShape(const cv::Mat& m) {
+  std::cout << "[" << m.rows << 'x' << m.cols << 'x' << m.channels() << "]" << std::endl;
+}
+
+inline std::tuple<cv::Mat, double, cv::Mat> NormalizeTextureVec(const cv::Mat& v, const cv::Mat& ref) {
+  cv::Mat u = v.clone();
+  u = u.reshape(1).reshape(1, 3);  // split the rows
+
+  double alpha = ref.dot(v);
+
+  // compute row mean
+  cv::Mat mean;
+  cv::reduce(u, mean, 1, CV_REDUCE_AVG);
+
+  cv::Mat beta;
+  cv::repeat(mean, 1, v.cols, beta);
+
+  cv::Mat normalized = (u - beta) / alpha;
+  normalized = normalized.reshape(3, 1);
+
+  return std::make_tuple(normalized, alpha, beta);
+}

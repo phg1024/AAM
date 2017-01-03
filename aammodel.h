@@ -9,6 +9,7 @@ public:
   ~AAMModel(){}
 
   void BuildModel(std::vector<int> indices = std::vector<int>());
+  std::vector<int> FindOutliers(std::vector<int> indices = std::vector<int>());
 
 protected:
   void Preprocess();

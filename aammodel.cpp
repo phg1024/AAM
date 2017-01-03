@@ -157,10 +157,12 @@ Mat AAMModel::ComputeMeanShape(const Mat& shapes) {
   const int npoints = shapes.cols / 2;
   const int nimages = images.size();
 
+  const int target_shape_size = 250;
+
   Mat meanshape = Mat::zeros(1, npoints*2, CV_64FC1);
   for(int j=0;j<nimages;++j) meanshape += shapes.row(j);
   meanshape /= nimages;
-  meanshape = ScaleShape(meanshape, 250);
+  meanshape = ScaleShape(meanshape, target_shape_size);
 
   const int max_iters = 100;
 
@@ -170,7 +172,7 @@ Mat AAMModel::ComputeMeanShape(const Mat& shapes) {
       new_meanshape = new_meanshape + AlignShape(shapes.row(j), meanshape);
     }
     new_meanshape /= nimages;
-    new_meanshape = ScaleShape(new_meanshape, 250);
+    new_meanshape = ScaleShape(new_meanshape, target_shape_size);
     double norm = cv::norm(new_meanshape - meanshape);
     cout << "iter " << iter << ": Diff = " << norm << endl;
     meanshape = new_meanshape;
@@ -335,9 +337,46 @@ Mat AAMModel::ComputeMeanTexture(const vector<Mat>& images,
   for(int iter=0;iter<max_iters;++iter) {
     Mat newmeantexture(1, ntexels, CV_64FC3, cv::Scalar(0, 0, 0));
     for(int i=0;i<nimages;++i) {
+#if 0
       double alpha_i = meantexture.dot(textures.row(i));
       double beta_i = cv::mean(textures.row(i))[0];
       normalized_textures.row(i) = (textures.row(i) - beta_i) / alpha_i;
+
+/*
+alpha_i = 47007
+norm(v) = 234.169
+norm(res) = 0.00176616
+
+alpha_i = 38811.2
+norm(v) = 194.557
+norm(res) = 0.00199747
+
+alpha_i = 48670.9
+norm(v) = 242.437
+norm(res) = 0.0014125
+
+alpha_i = 43697
+norm(v) = 229.786
+norm(res) = 0.00258385
+
+alpha_i = 32223.3
+norm(v) = 163.528
+norm(res) = 0.00184221
+
+alpha_i = 36232.1
+norm(v) = 189.492
+norm(res) = 0.00254015
+
+*/
+
+      std::cout << "alpha_i = " << alpha_i << std::endl;
+      std::cout << "norm(v) = " << cv::norm(textures.row(i)) << std::endl;
+      std::cout << "norm(res) = " << cv::norm(normalized_textures.row(i)) << std::endl;
+      PAUSE();
+#else
+      auto normalization_res = NormalizeTextureVec(textures.row(i), meantexture);
+      normalized_textures.row(i) = std::get<0>(normalization_res)*1;
+#endif
       newmeantexture += normalized_textures.row(i);
     }
     newmeantexture /= nimages;
@@ -378,30 +417,37 @@ void AAMModel::BuildModel(vector<int> indices) {
   cout << textures.rows << 'x' << textures.cols << endl;
   cout << texture_model.mean.rows << 'x' << texture_model.mean.cols << endl;
 
-  vector<double> diffs(nimages);
+  Mat diffs(1, nimages, CV_64FC1);
   vector<Mat> reconstructions(nimages);
   for(int i=0;i<nimages;++i) {
     Mat coeffs(1, texture_model.mean.cols, texture_model.mean.type()), reconstructed;
     Mat vec = textures.row(i);
 
     // normalize it
+#if 0
     double alpha_i = vec.dot(meantexture);
     double beta_i = cv::mean(vec)[0];
     Mat normalized_vec = (vec - beta_i) / alpha_i - meantexture;
+#else
+    Mat normalized_vec, beta_i;
+    double alpha_i;
 
+    tie(normalized_vec, alpha_i, beta_i) = NormalizeTextureVec(vec, meantexture);
+    normalized_vec -= meantexture;
+#endif
     texture_model.project(normalized_vec.reshape(1), coeffs);
     texture_model.backProject(coeffs, reconstructed);
     reconstructed = reconstructed.reshape(3);
 
-    diffs[i] = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
+    diffs.at<double>(0, i) = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
 
     // unnormalize it
-    reconstructed = (reconstructed + meantexture) * alpha_i + beta_i;
+    reconstructed = (reconstructed + meantexture) * alpha_i + beta_i.reshape(3, 1);
 
     reconstructions[i] = reconstructed;
-    printf("%d. diff = %g\n", i, diffs[i]);
+    printf("%d. diff = %g\n", i, diffs.at<double>(0, i));
 
-#if 0
+#if 1
     cv::Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
     FillImage(reconstructions[i], pixel_coords, img);
     cv::imshow("outlier", img);
@@ -413,19 +459,141 @@ void AAMModel::BuildModel(vector<int> indices) {
 #endif
   }
 
-  auto max_it = max_element(diffs.begin(), diffs.end());
-  auto max_idx = distance(diffs.begin(), max_it);
+  cv::Scalar mean_diff, stddev_diff;
+  cv::meanStdDev(diffs, mean_diff, stddev_diff);
 
-  cout << "max idx = " << max_idx << endl;
+  cout << mean_diff << ", " << stddev_diff << endl;
 
-  // Fill the image
-  cv::Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
-  FillImage(reconstructions[max_idx], pixel_coords, img);
-  cv::imshow("outlier", img);
+  for(int i=0;i<nimages;++i) {
+    if(diffs.at<double>(0, i) >= mean_diff[0] + 3 * stddev_diff[0]) {
+      int max_idx = i;
+      // Fill the image
+      cv::Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+      FillImage(reconstructions[max_idx], pixel_coords, img);
+      cv::imshow("outlier", img);
 
-  cv::Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
-  FillImage(textures.row(max_idx) + meantexture, pixel_coords, img_ref);
-  cv::imshow("ref", img_ref);
-  cv::waitKey();
+      cv::Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+      FillImage(textures.row(max_idx) + meantexture, pixel_coords, img_ref);
+      cv::imshow("ref", img_ref);
+      cv::waitKey();
+    }
+  }
 #endif
+}
+
+vector<int> AAMModel::FindOutliers(vector<int> indices) {
+  if(indices.empty()) {
+    indices.resize(input_images.size());
+    std::iota(indices.begin(), indices.end(), 0);
+  }
+
+  int nimages = indices.size();
+
+  set<int> current_set(indices.begin(), indices.end());
+
+  vector<Mat> reconstructions(nimages);
+  Mat diffs(1, nimages, CV_64FC1);
+  #pragma omp parallel for
+  for(int i=0;i<indices.size();++i) {
+    cout << i << endl;
+    set<int> set_i = current_set;
+    set_i.erase(indices[i]);
+
+    Mat shapes_i(set_i.size(), shapes.cols, shapes.type()),
+        normalized_textures_i(set_i.size(), normalized_textures.cols, normalized_textures.type());
+
+    int ridx = 0;
+    for(auto j : set_i) {
+      shapes_i.row(ridx) = shapes.row(j) * 1;
+      normalized_textures_i.row(ridx) = normalized_textures.row(j) * 1;
+      ++ridx;
+    }
+    cout << "data copied." << endl;
+
+    // Construct shape and texture model with the provided indices
+    cv::PCA shape_model, texture_model;
+    {
+      boost::timer::auto_cpu_timer t("Shape model constructed in %w seconds.\n");
+      shape_model = shape_model(shapes_i, Mat(), CV_PCA_DATA_AS_ROW, 0.98);
+    }
+    {
+      boost::timer::auto_cpu_timer t("Texture model constructed in %w seconds.\n");
+      texture_model = texture_model(normalized_textures_i.reshape(1), Mat(), CV_PCA_DATA_AS_ROW, 0.98);
+    }
+
+    #if 1
+    cout << textures.rows << 'x' << textures.cols << endl;
+    cout << texture_model.mean.rows << 'x' << texture_model.mean.cols << endl;
+
+    Mat coeffs(1, texture_model.mean.cols, texture_model.mean.type()), reconstructed;
+    Mat vec = textures.row(indices[i]);
+
+    // normalize it
+#if 0
+    double alpha_i = vec.dot(meantexture);
+    double beta_i = cv::mean(vec)[0];
+    Mat normalized_vec = (vec - beta_i) / alpha_i - meantexture;
+#else
+    Mat normalized_vec, beta_i;
+    double alpha_i;
+    tie(normalized_vec, alpha_i, beta_i) = NormalizeTextureVec(vec, meantexture);
+    normalized_vec -= meantexture;  // subtract meantexture since the PCA model is built on difference
+#endif
+    texture_model.project(normalized_vec.reshape(1), coeffs);
+    texture_model.backProject(coeffs, reconstructed);
+    reconstructed = reconstructed.reshape(3);
+
+    diffs.at<double>(0, i) = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
+
+    cout << "here" << endl;
+    PrintShape(reconstructed);
+    PrintShape(meantexture);
+    PrintShape(beta_i);
+
+    // unnormalize it
+    reconstructed = (reconstructed + meantexture) * alpha_i + beta_i.reshape(3, 1);
+
+    reconstructions[i] = reconstructed;
+    printf("%d. diff = %g\n", i, diffs.at<double>(0, i));
+
+    #if 0
+      cv::Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+      FillImage(reconstructions[i], pixel_coords, img);
+      cv::imshow("outlier", img);
+
+      cv::Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+      FillImage(textures.row(indices[i]), pixel_coords, img_ref);
+      cv::imshow("ref", img_ref);
+      cv::waitKey();
+    #endif
+  }
+
+  cv::Scalar mean_diff, stddev_diff;
+  cv::meanStdDev(diffs, mean_diff, stddev_diff);
+
+  cout << mean_diff << ", " << stddev_diff << endl;
+
+  set<int> res;
+  for(int i=0;i<nimages;++i) {
+    if(diffs.at<double>(0, i) >= mean_diff[0] + 3 * stddev_diff[0]) {
+      int max_idx = indices[i];
+      cout << max_idx << endl;
+      // Fill the image
+      cv::Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+      FillImage(reconstructions[max_idx], pixel_coords, img);
+      cv::imshow("outlier", img);
+
+      cv::Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+      FillImage(textures.row(max_idx) + meantexture, pixel_coords, img_ref);
+      cv::imshow("ref", img_ref);
+      cv::waitKey();
+    } else {
+      res.insert(indices[i]);
+    }
+  }
+
+  cout << "done." << endl;
+#endif
+
+  return vector<int>(res.begin(), res.end());
 }

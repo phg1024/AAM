@@ -54,7 +54,8 @@ int main(int argc, char** argv) {
   }
 
   AAMModel model(images, points);
-  model.BuildModel();
-  
+  //model.BuildModel();
+  model.FindOutliers();
+
   return 0;
 }
