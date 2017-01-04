@@ -23,9 +23,13 @@ namespace aam {
   }
 
   namespace {
-    inline void safe_create(const fs::path& p) {
-      if(fs::exists(p)) fs::remove_all(p);
-      fs::create_directory(p);
+    inline void safe_create(const fs::path& p, bool force_remove=true) {
+      if (fs::exists(p)) {
+        if (force_remove) {
+          fs::remove_all(p);
+          fs::create_directory(p);
+        }
+      }
     }
   }
 
@@ -712,6 +716,19 @@ namespace aam {
     cout << "done." << endl;
 
     return vector<int>(res.begin(), res.end());
+  }
+
+  std::vector<int> AAMModel::FindInliers_Iterative(vector<int> indices) {
+    boost::timer::auto_cpu_timer t("Outlier detection finished in %w seconds.\n");
+    while(true) {
+      int sz = indices.size();
+      {
+        boost::timer::auto_cpu_timer t("Iteration finished in %w seconds.\n");
+        indices = FindInliers(indices);
+      }
+      if(sz == indices.size()) break;
+    }
+    return indices;
   }
 
 }

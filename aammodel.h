@@ -28,6 +28,7 @@ namespace aam {
 
     void BuildModel(std::vector<int> indices = std::vector<int>());
     std::vector<int> FindInliers(std::vector<int> indices = std::vector<int>());
+    std::vector<int> FindInliers_Iterative(std::vector<int> indices = std::vector<int>());
 
   protected:
     void Init();
