@@ -9,6 +9,7 @@ namespace aam {
   using Eigen::MatrixXd;
 
   using cv::Mat;
+  namespace fs = boost::filesystem;
 
   AAMModel::AAMModel() {
     Init();
@@ -21,10 +22,26 @@ namespace aam {
     Preprocess();
   }
 
+  namespace {
+    inline void safe_create(const fs::path& p) {
+      if(fs::exists(p)) fs::remove_all(p);
+      fs::create_directory(p);
+    }
+  }
+
   void AAMModel::Init() {
+    metric = TextureError;
+
     triangles = LoadTriangulation("/home/phg/Data/Multilinear/landmarks_triangulation.dat");
     // Convert to 0-based indexing
     std::for_each(triangles.begin(), triangles.end(), [](cv::Vec3i& v) { v -= cv::Vec3i(1, 1, 1); });
+
+    // Use current directory as default path
+    output_path = "./";
+
+    // Create output directories if not exists
+    safe_create(fs::path(output_path) / fs::path("outliers"));
+    safe_create(fs::path(output_path) / fs::path("inliers"));
   }
 
   void AAMModel::SetImages(const std::vector<QImage> &images) {
@@ -33,6 +50,17 @@ namespace aam {
 
   void AAMModel::SetPoints(const std::vector<cv::Mat> &points) {
     input_points = points;
+  }
+
+  void AAMModel::SetOutputPath(const std::string &path) {
+    output_path = path;
+
+    cout << "Output path is " << output_path << endl;
+
+    // Create output directories if not exists
+    safe_create(fs::path(output_path));
+    safe_create(fs::path(output_path) / fs::path("outliers"));
+    safe_create(fs::path(output_path) / fs::path("inliers"));
   }
 
   void AAMModel::ProcessImages() {
@@ -234,10 +262,18 @@ namespace aam {
                          shape.at<double>(0, idx*2+1));
     };
 
-    vector<cv::Point2f> meanshape_verts(npoints);
-    for(int i=0;i<npoints;++i) {
-      meanshape_verts[i] = get_point(meanshape, i);
-    }
+    auto shape_to_verts = [&get_point](const Mat& shape) {
+      const int npoints = shape.cols / 2;
+      vector<cv::Point2f> verts(npoints);
+      for(int i=0;i<npoints;++i) {
+        verts[i] = get_point(shape, i);
+      }
+      return verts;
+    };
+
+    vector<cv::Point2f> meanshape_verts = shape_to_verts(meanshape);
+    vector<vector<cv::Point2f>> shape_verts(nimages);
+    for(int i=0;i<nimages;++i) shape_verts[i] = shape_to_verts(shapes.row(i));
 
     tforms.resize(nimages, vector<Mat>(ntriangles));
     tforms_inv.resize(nimages, vector<Mat>(ntriangles));
@@ -263,20 +299,32 @@ namespace aam {
     }
 
     // Create pixel map in the texture space
-    const int tri_id_offset = 128;
-    pixel_map = Mat(h, w, CV_8UC1, cv::Scalar(0));
-    for(int j=0;j<ntriangles;++j) {
-      const int vj0 = triangles[j][0];
-      const int vj1 = triangles[j][1];
-      const int vj2 = triangles[j][2];
+    auto GeneratePixelMap = [=](const std::vector<cv::Point2f>& verts, const std::vector<cv::Vec3i>& triangles, cv::Mat& pixel_map) {
+      const int ntriangles = triangles.size();
+      pixel_map = Mat(h, w, CV_8UC1, cv::Scalar(0));
+      for(int j=0;j<ntriangles;++j) {
+        const int vj0 = triangles[j][0];
+        const int vj1 = triangles[j][1];
+        const int vj2 = triangles[j][2];
 
-      FillTriangle(pixel_map, meanshape_verts[vj0], meanshape_verts[vj1], meanshape_verts[vj2], cv::Scalar(j+tri_id_offset));
-    }
+        FillTriangle(pixel_map, verts[vj0], verts[vj1], verts[vj2], cv::Scalar(j+tri_id_offset));
+      }
+    };
 
+    GeneratePixelMap(meanshape_verts, triangles, pixel_map);
 #if 0
-    cv::imshow("pixel map", pixel_map);
-  cv::waitKey();
+    cv::imshow("mean pixel map", pixel_map);
+    cv::waitKey();
 #endif
+
+    inv_pixel_maps.resize(nimages);
+    for(int i=0;i<nimages;++i) {
+      GeneratePixelMap(shape_verts[i], triangles, inv_pixel_maps[i]);
+#if 0
+      cv::imshow("pixel map", inv_pixel_maps[i]);
+      cv::waitKey();
+#endif
+    }
 
     // Count the number of pixels we need to process
     pixel_counts.resize(ntriangles, 0);
@@ -318,14 +366,13 @@ namespace aam {
 
           cv::Vec3d sample = SampleImage(images[i], cv::Point2f(pts.at<float>(0,k*2), pts.at<float>(0,k*2+1)));
 
-          warped_images[i].at<cv::Vec3d>(pix_coord[0], pix_coord[1])
-            = sample;
+          warped_images[i].at<cv::Vec3d>(pix_coord[0], pix_coord[1]) = sample;
         }
       }
 
 #if 0
       cv::imshow("warped", warped_images[i]);
-    cv::waitKey(25);
+      cv::waitKey(25);
 #endif
     }
 
@@ -346,14 +393,14 @@ namespace aam {
 
 #if 0
     Mat mean_warped_image(h, w, CV_64FC3, cv::Scalar(0, 0, 0));
-  for(int i=0;i<nimages;++i) {
-    mean_warped_image += warped_images[i];
-    cout << i << endl;
-    cv::imshow("warped", warped_images[i]);
-    cv::imshow("meantexture", meantexture / (i+1));
-    cv::waitKey();
-  }
-  mean_warped_image /= nimages;
+    for(int i=0;i<nimages;++i) {
+      mean_warped_image += warped_images[i];
+      cout << i << endl;
+      cv::imshow("warped", warped_images[i]);
+      cv::imshow("meantexture", mean_warped_image / (i+1));
+      cv::waitKey();
+    }
+    mean_warped_image /= nimages;
 #endif
 
     Mat meantexture;
@@ -366,46 +413,8 @@ namespace aam {
     for(int iter=0;iter<max_iters;++iter) {
       Mat newmeantexture(1, ntexels, CV_64FC3, cv::Scalar(0, 0, 0));
       for(int i=0;i<nimages;++i) {
-#if 0
-        double alpha_i = meantexture.dot(textures.row(i));
-      double beta_i = cv::mean(textures.row(i))[0];
-      normalized_textures.row(i) = (textures.row(i) - beta_i) / alpha_i;
-
-/*
-alpha_i = 47007
-norm(v) = 234.169
-norm(res) = 0.00176616
-
-alpha_i = 38811.2
-norm(v) = 194.557
-norm(res) = 0.00199747
-
-alpha_i = 48670.9
-norm(v) = 242.437
-norm(res) = 0.0014125
-
-alpha_i = 43697
-norm(v) = 229.786
-norm(res) = 0.00258385
-
-alpha_i = 32223.3
-norm(v) = 163.528
-norm(res) = 0.00184221
-
-alpha_i = 36232.1
-norm(v) = 189.492
-norm(res) = 0.00254015
-
-*/
-
-      std::cout << "alpha_i = " << alpha_i << std::endl;
-      std::cout << "norm(v) = " << cv::norm(textures.row(i)) << std::endl;
-      std::cout << "norm(res) = " << cv::norm(normalized_textures.row(i)) << std::endl;
-      PAUSE();
-#else
         auto normalization_res = NormalizeTextureVec(textures.row(i), meantexture);
         normalized_textures.row(i) = std::get<0>(normalization_res)*1;
-#endif
         newmeantexture += normalized_textures.row(i);
       }
       newmeantexture /= nimages;
@@ -442,10 +451,6 @@ norm(res) = 0.00254015
       texture_model = texture_model(normalized_textures.reshape(1), Mat(), CV_PCA_DATA_AS_ROW, 0.98);
     }
 
-#if 1
-    cout << textures.rows << 'x' << textures.cols << endl;
-    cout << texture_model.mean.rows << 'x' << texture_model.mean.cols << endl;
-
     Mat diffs(1, nimages, CV_64FC1);
     vector<Mat> reconstructions(nimages);
     for(int i=0;i<nimages;++i) {
@@ -453,17 +458,12 @@ norm(res) = 0.00254015
       Mat vec = textures.row(i);
 
       // normalize it
-#if 0
-      double alpha_i = vec.dot(meantexture);
-    double beta_i = cv::mean(vec)[0];
-    Mat normalized_vec = (vec - beta_i) / alpha_i - meantexture;
-#else
       Mat normalized_vec, beta_i;
       double alpha_i;
 
       tie(normalized_vec, alpha_i, beta_i) = NormalizeTextureVec(vec, meantexture);
       normalized_vec -= meantexture;
-#endif
+
       texture_model.project(normalized_vec.reshape(1), coeffs);
       texture_model.backProject(coeffs, reconstructed);
       reconstructed = reconstructed.reshape(3);
@@ -507,10 +507,9 @@ norm(res) = 0.00254015
         cv::waitKey();
       }
     }
-#endif
   }
 
-  vector<int> AAMModel::FindOutliers(vector<int> indices) {
+  vector<int> AAMModel::FindInliers(vector<int> indices) {
     if(indices.empty()) {
       indices.resize(input_images.size());
       std::iota(indices.begin(), indices.end(), 0);
@@ -549,39 +548,39 @@ norm(res) = 0.00254015
         texture_model = texture_model(normalized_textures_i.reshape(1), Mat(), CV_PCA_DATA_AS_ROW, 0.98);
       }
 
-#if 1
-      cout << textures.rows << 'x' << textures.cols << endl;
-      cout << texture_model.mean.rows << 'x' << texture_model.mean.cols << endl;
-
       Mat coeffs(1, texture_model.mean.cols, texture_model.mean.type()), reconstructed;
       Mat vec = textures.row(indices[i]);
 
       // normalize it
-#if 0
-      double alpha_i = vec.dot(meantexture);
-    double beta_i = cv::mean(vec)[0];
-    Mat normalized_vec = (vec - beta_i) / alpha_i - meantexture;
-#else
       Mat normalized_vec, beta_i;
       double alpha_i;
       tie(normalized_vec, alpha_i, beta_i) = NormalizeTextureVec(vec, meantexture);
-      normalized_vec -= meantexture;  // subtract meantexture since the PCA model is built on difference
-#endif
+      // subtract meantexture since the PCA model is built on difference
+      normalized_vec -= meantexture;
+
       texture_model.project(normalized_vec.reshape(1), coeffs);
       texture_model.backProject(coeffs, reconstructed);
       reconstructed = reconstructed.reshape(3);
 
-      diffs.at<double>(0, i) = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
-
-      cout << "here" << endl;
-      PrintShape(reconstructed);
-      PrintShape(meantexture);
-      PrintShape(beta_i);
-
       // unnormalize it
-      reconstructed = (reconstructed + meantexture) * alpha_i + beta_i.reshape(3, 1);
+      reconstructions[i] = (reconstructed + meantexture) * alpha_i + beta_i.reshape(3, 1);
 
-      reconstructions[i] = reconstructed;
+      switch(metric) {
+        case TextureError: {
+          diffs.at<double>(0, i) = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
+          break;
+        }
+        case FittingError: {
+          // Warp reconstructed back to image space and compute fitting error using the pixel mask
+          double diff_i = 0;
+
+          //diffs.at<double>(0, i) = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
+          break;
+        }
+        default:
+          break;
+      }
+
       printf("%d. diff = %g\n", i, diffs.at<double>(0, i));
 
 #if 0
@@ -601,30 +600,44 @@ norm(res) = 0.00254015
 
     cout << mean_diff << ", " << stddev_diff << endl;
 
+    // always create a new inlier directory
+    safe_create(fs::path(output_path) / fs::path("inliers"));
+
     set<int> res;
     for(int i=0;i<nimages;++i) {
-      if(diffs.at<double>(0, i) >= mean_diff[0] + 2 * stddev_diff[0]) {
-        int max_idx = indices[i];
-        cout << max_idx << endl;
+      int max_idx = indices[i];
 
+      if(diffs.at<double>(0, i) >= mean_diff[0] + 2 * stddev_diff[0]) {
+        cout << "outlier: " << max_idx << endl;
         Mat img_i = images[max_idx].clone();
         DrawShape(img_i, shapes.row(max_idx));
-        cv::imwrite("image" + to_string(max_idx) + ".jpg", img_i * 255);
+        cv::imwrite(output_path + "/outliers/" + "image" + to_string(max_idx) + ".jpg", img_i * 255);
 
         Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
         FillImage(reconstructions[i], pixel_coords, img);
-        cv::imwrite("image" + to_string(max_idx) + "_fitted_tex.jpg", img * 255);
+        cv::imwrite(output_path + "/outliers/" + "image" + to_string(max_idx) + "_fitted_tex.jpg", img * 255);
 
         Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
         FillImage(textures.row(max_idx) + meantexture, pixel_coords, img_ref);
-        cv::imwrite("image" + to_string(max_idx) + "_warped.jpg", img_ref * 255);
+        cv::imwrite(output_path + "/outliers/" + "image" + to_string(max_idx) + "_warped.jpg", img_ref * 255);
       } else {
         res.insert(indices[i]);
+
+        Mat img_i = images[max_idx].clone();
+        DrawShape(img_i, shapes.row(max_idx));
+        cv::imwrite(output_path + "/inliers/" + "image" + to_string(max_idx) + ".jpg", img_i * 255);
+
+        Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+        FillImage(reconstructions[i], pixel_coords, img);
+        cv::imwrite(output_path + "/inliers/" + "image" + to_string(max_idx) + "_fitted_tex.jpg", img * 255);
+
+        Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+        FillImage(textures.row(max_idx) + meantexture, pixel_coords, img_ref);
+        cv::imwrite(output_path + "/inliers/" + "image" + to_string(max_idx) + "_warped.jpg", img_ref * 255);
       }
     }
 
     cout << "done." << endl;
-#endif
 
     return vector<int>(res.begin(), res.end());
   }

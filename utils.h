@@ -33,7 +33,7 @@ namespace aam {
   inline void DrawShape(cv::Mat& img, const cv::Mat& shape) {
     const int npoints = shape.cols / 2;
     for(int j=0;j<npoints;++j) {
-      cv::circle(img, cv::Point(shape.at<double>(0, j*2), shape.at<double>(0, j*2+1)), 1, cv::Scalar( 0, 255, 0));
+      cv::circle(img, cv::Point(shape.at<double>(0, j*2), shape.at<double>(0, j*2+1)), 1, cv::Scalar( 0, 255, 0), -1);
     }
   }
 

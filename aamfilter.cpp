@@ -14,7 +14,9 @@ int main(int argc, char** argv) {
 
   po::options_description desc("Options");
   desc.add_options()
-    ("settings_file", po::value<string>()->required(), "Input settings file");
+    ("settings_file", po::value<string>()->required(), "Input settings file")
+    ("output_path", po::value<string>()->default_value("."), "Output folder")
+    ("mode", po::value<string>()->default_value("filter"), "Mode to run");
 
   po::variables_map vm;
 
@@ -55,21 +57,22 @@ int main(int argc, char** argv) {
   }
 
   AAMModel model(images, points);
-  //model.BuildModel();
+  model.SetOutputPath(vm["output_path"].as<string>());
 
-  {
+  if(vm["mode"].as<string>() == "filter"){
     boost::timer::auto_cpu_timer t("Outlier detection finished in %w seconds.\n");
     vector<int> indices;
     while(true) {
       int sz = indices.size();
       {
         boost::timer::auto_cpu_timer t("Iteration finished in %w seconds.\n");
-        indices = model.FindOutliers(indices);
+        indices = model.FindInliers(indices);
       }
       if(sz == indices.size()) break;
     }
+  } else if(vm["mode"].as<string>() == "build") {
+    model.BuildModel();
   }
-
 
   return 0;
 }
