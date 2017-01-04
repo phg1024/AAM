@@ -60,11 +60,16 @@ namespace aam {
     std::vector<std::vector<cv::Mat>> tforms, tforms_inv;
 
     const int tri_id_offset = 128;
-    cv::Mat pixel_map;  // pixel to triangle indices map in the texture space
+    cv::Mat pixel_map;  //!< pixel to triangle indices map in the texture space
     std::vector<cv::Mat> inv_pixel_maps;  //!< pixel to triangle indices map in the input image space
-    std::vector<int> pixel_counts;
+
+    std::vector<int> pixel_counts;  //!< pixel counts in texture space
+    std::vector<std::vector<int>> inv_pixel_counts; //!< pixel counts in image space
+
     std::vector<std::vector<cv::Vec2i>> pixel_coords;
+    std::vector<std::vector<std::vector<cv::Vec2i>>> inv_pixel_coords;
     std::vector<cv::Mat> pixel_mats;
+    std::vector<std::vector<cv::Mat>> inv_pixel_mats, inv_pixel_pts;
 
     cv::Mat meanshape, meantexture;
 

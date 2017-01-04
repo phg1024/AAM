@@ -58,6 +58,7 @@ int main(int argc, char** argv) {
 
   AAMModel model(images, points);
   model.SetOutputPath(vm["output_path"].as<string>());
+  model.SetErrorMetric(AAMModel::FittingError);
 
   if(vm["mode"].as<string>() == "filter"){
     boost::timer::auto_cpu_timer t("Outlier detection finished in %w seconds.\n");

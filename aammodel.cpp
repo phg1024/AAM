@@ -327,33 +327,79 @@ namespace aam {
     }
 
     // Count the number of pixels we need to process
-    pixel_counts.resize(ntriangles, 0);
-    pixel_coords.resize(ntriangles);
-    for(int i=0;i<h;++i) {
-      for(int j=0;j<w;++j) {
-        int tri_id = static_cast<int>(pixel_map.at<unsigned char>(i, j)) - tri_id_offset;
-        if(tri_id >= 0) {
-          ++pixel_counts[tri_id];
-          pixel_coords[tri_id].push_back(cv::Vec2i(i, j));
+    auto collect_pixel_info = [=](const Mat& pix_map,
+                                  vector<int>& pix_counts,
+                                  vector<vector<cv::Vec2i>>& pix_coords,
+                                  vector<Mat>& pix_mats){
+      pix_counts.resize(ntriangles, 0);
+      pix_coords.resize(ntriangles);
+      for (int i = 0; i < h; ++i) {
+        for (int j = 0; j < w; ++j) {
+          int tri_id = static_cast<int>(pix_map.at<unsigned char>(i, j)) - tri_id_offset;
+          if (tri_id >= 0) {
+            ++pix_counts[tri_id];
+            pix_coords[tri_id].push_back(cv::Vec2i(i, j));
+          }
         }
       }
-    }
 
-    // Create the list of points we need to project back
-    pixel_mats.resize(ntriangles);
-    for(int j=0;j<ntriangles;++j) {
-      pixel_mats[j] = cv::Mat(pixel_counts[j], 2, CV_32FC1);
-      for(int k=0;k<pixel_counts[j];++k) {
-        auto pix_coord = pixel_coords[j][k];
-        pixel_mats[j].at<float>(k, 0) = pix_coord[1];
-        pixel_mats[j].at<float>(k, 1) = pix_coord[0];
+      // Create the list of points we need to project back/forward
+      pix_mats.resize(ntriangles);
+      for(int j=0;j<ntriangles;++j) {
+        pix_mats[j] = cv::Mat(pix_counts[j], 2, CV_32FC1);
+        for(int k=0;k<pix_counts[j];++k) {
+          auto pix_coord = pix_coords[j][k];
+          pix_mats[j].at<float>(k, 0) = pix_coord[1];
+          pix_mats[j].at<float>(k, 1) = pix_coord[0];
+        }
       }
+    };
+
+    collect_pixel_info(pixel_map, pixel_counts, pixel_coords, pixel_mats);
+
+    inv_pixel_mats.resize(nimages);
+    inv_pixel_counts.resize(nimages);
+    inv_pixel_coords.resize(nimages);
+    for(int i=0;i<nimages;++i) collect_pixel_info(inv_pixel_maps[i], inv_pixel_counts[i], inv_pixel_coords[i], inv_pixel_mats[i]);
+
+    // Create image space points to texture space points mapping
+    inv_pixel_pts.resize(nimages, vector<Mat>(ntriangles));
+    for(int i=0;i<nimages;++i) {
+#if 0
+      Mat img(h, w, CV_64FC3, cv::Scalar(0, 0, 0));
+#endif
+      for(int j=0;j<ntriangles;++j) {
+        if(inv_pixel_mats[i][j].rows == 0) {
+          continue;
+        }
+
+        // project the points from input image to texture space
+        cv::Mat pts;
+        cv::transform(inv_pixel_mats[i][j].reshape(2), pts, tforms[i][j]);
+        pts = pts.reshape(1, 1);
+
+        inv_pixel_pts[i][j] = pts;
+
+#if 0
+        for(int k=0;k<inv_pixel_mats[i][j].rows;++k) {
+          cv::circle(img, cv::Point(inv_pixel_mats[i][j].at<float>(k, 0),
+                                    inv_pixel_mats[i][j].at<float>(k, 1)),
+          1, cv::Scalar(0, 255, 0));
+        }
+#endif
+      }
+#if 0
+      cv::imshow("pixel map", inv_pixel_maps[i]);
+      cv::imshow("source points", img);
+      cv::waitKey();
+#endif
     }
 
     // Warp the input images to the meanshape space
     warped_images.resize(nimages);
 
     for(int i=0;i<nimages;++i) {
+#if 0
       warped_images[i] = Mat(h, w, CV_64FC3, cv::Scalar(0, 0, 0));
       for(int j=0;j<ntriangles;++j) {
         // project back the points to input image space
@@ -369,10 +415,17 @@ namespace aam {
           warped_images[i].at<cv::Vec3d>(pix_coord[0], pix_coord[1]) = sample;
         }
       }
+#else
+      warped_images[i] = WarpImage(images[i], tforms_inv[i], pixel_mats, pixel_coords);
+#endif
 
 #if 0
+      cout << i << endl;
+      cout << tforms.size() << ", " << inv_pixel_mats.size() << ", " << inv_pixel_coords.size() << endl;
       cv::imshow("warped", warped_images[i]);
-      cv::waitKey(25);
+      Mat warp_back = WarpImage(warped_images[i], tforms[i], inv_pixel_mats[i], inv_pixel_coords[i]);
+      cv::imshow("warped back", warp_back);
+      cv::waitKey();
 #endif
     }
 
@@ -519,9 +572,10 @@ namespace aam {
 
     set<int> current_set(indices.begin(), indices.end());
 
-    vector<Mat> reconstructions(nimages);
+    vector<Mat> reconstructions(nimages), fitted_images(nimages);
     Mat diffs(1, nimages, CV_64FC1);
-#pragma omp parallel for
+
+    #pragma omp parallel for
     for(int i=0;i<indices.size();++i) {
       cout << i << endl;
       set<int> set_i = current_set;
@@ -565,6 +619,7 @@ namespace aam {
       // unnormalize it
       reconstructions[i] = (reconstructed + meantexture) * alpha_i + beta_i.reshape(3, 1);
 
+      Mat fitted, warp_back;
       switch(metric) {
         case TextureError: {
           diffs.at<double>(0, i) = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
@@ -573,8 +628,12 @@ namespace aam {
         case FittingError: {
           // Warp reconstructed back to image space and compute fitting error using the pixel mask
           double diff_i = 0;
-
-          //diffs.at<double>(0, i) = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
+          cout << "warping image ..." << endl;
+          fitted = Mat(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+          FillImage(reconstructions[i], pixel_coords, fitted);
+          warp_back = WarpImage(fitted, tforms[indices[i]], inv_pixel_mats[indices[i]], inv_pixel_coords[indices[i]]);
+          fitted_images[i] = warp_back;
+          diffs.at<double>(0, i) = ComputeRMSE(warp_back, images[indices[i]], inv_pixel_coords[indices[i]]);
           break;
         }
         default:
@@ -584,13 +643,20 @@ namespace aam {
       printf("%d. diff = %g\n", i, diffs.at<double>(0, i));
 
 #if 0
-      cv::Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
-      FillImage(reconstructions[i], pixel_coords, img);
-      cv::imshow("outlier", img);
+      cv::imshow("fitted", fitted);
 
       cv::Mat img_ref(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
       FillImage(textures.row(indices[i]), pixel_coords, img_ref);
       cv::imshow("ref", img_ref);
+
+      Mat image_i = images[indices[i]].clone();
+      DrawShape(image_i, shapes[indices[i]]);
+      cv::imshow("input", images[indices[i]]);
+
+      cv::putText(warp_back, std::to_string(diffs.at<double>(0, i)), cv::Point(5, 20),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.35, cv::Scalar(255, 175, 175));
+      cv::imshow("warp_back", warp_back);
+
       cv::waitKey();
 #endif
     }
@@ -613,6 +679,9 @@ namespace aam {
         DrawShape(img_i, shapes.row(max_idx));
         cv::imwrite(output_path + "/outliers/" + "image" + to_string(max_idx) + ".jpg", img_i * 255);
 
+        Mat img_fitted = fitted_images[i];
+        cv::imwrite(output_path + "/outliers/" + "image" + to_string(max_idx) + "_fitted.jpg", img_fitted * 255);
+
         Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
         FillImage(reconstructions[i], pixel_coords, img);
         cv::imwrite(output_path + "/outliers/" + "image" + to_string(max_idx) + "_fitted_tex.jpg", img * 255);
@@ -626,6 +695,9 @@ namespace aam {
         Mat img_i = images[max_idx].clone();
         DrawShape(img_i, shapes.row(max_idx));
         cv::imwrite(output_path + "/inliers/" + "image" + to_string(max_idx) + ".jpg", img_i * 255);
+
+        Mat img_fitted = fitted_images[i];
+        cv::imwrite(output_path + "/inliers/" + "image" + to_string(max_idx) + "_fitted.jpg", img_fitted * 255);
 
         Mat img(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
         FillImage(reconstructions[i], pixel_coords, img);

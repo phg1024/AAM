@@ -148,6 +148,8 @@ namespace aam {
     int x0 = p.x, y0 = p.y;
     int x1 = x0 + 1, y1 = y0 + 1;
 
+    if(x0 < 0 || y0 < 0 || x1 >= I.cols || y1 >= I.rows) return cv::Vec3d(0, 0, 0);
+
     //bilinear interpolation
     float dx = p.x - x0;
     float dy = p.y - y0;
@@ -191,6 +193,48 @@ namespace aam {
     normalized = normalized.reshape(3, 1);
 
     return std::make_tuple(normalized, alpha, beta);
+  }
+
+  inline cv::Mat WarpImage(const cv::Mat& img,
+                           const std::vector<cv::Mat>& tforms,
+                           const std::vector<cv::Mat>& pixel_mats,
+                           const std::vector<std::vector<cv::Vec2i>>& pixel_coords) {
+    const int h = img.rows, w = img.cols;
+    cv::Mat warped(h, w, CV_64FC3, cv::Scalar(0, 0, 0));
+    const int ntriangles = tforms.size();
+
+    for(int j=0;j<ntriangles;++j) {
+      // project back the points to input image space
+      if(pixel_mats[j].rows == 0) continue;
+
+      cv::Mat pts;
+      cv::transform(pixel_mats[j].reshape(2), pts, tforms[j]);
+      pts = pts.reshape(1, 1);
+
+      for(int k=0;k<pixel_coords[j].size();++k) {
+        auto pix_coord = pixel_coords[j][k];
+
+        cv::Vec3d sample = SampleImage(img, cv::Point2f(pts.at<float>(0,k*2), pts.at<float>(0,k*2+1)));
+
+        warped.at<cv::Vec3d>(pix_coord[0], pix_coord[1]) = sample;
+      }
+    }
+
+    return warped;
+  }
+
+  inline double ComputeRMSE(const cv::Mat& I1, const cv::Mat& I2, const std::vector<std::vector<cv::Vec2i>>& pixel_coords) {
+    double e = 0;
+    int count = 0;
+    for(auto coords : pixel_coords) {
+      count += coords.size();
+      for(auto p : coords) {
+        cv::Vec3d diff = I1.at<cv::Vec3d>(p[0], p[1]) - I2.at<cv::Vec3d>(p[0], p[1]);
+        e += diff.dot(diff);
+      }
+    }
+
+    return sqrt(e / count);
   }
 }
 
