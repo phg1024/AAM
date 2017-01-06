@@ -27,9 +27,10 @@ namespace aam {
       if (fs::exists(p)) {
         if (force_remove) {
           fs::remove_all(p);
-          fs::create_directory(p);
         }
       }
+
+      fs::create_directory(p);
     }
   }
 
@@ -62,7 +63,7 @@ namespace aam {
     cout << "Output path is " << output_path << endl;
 
     // Create output directories if not exists
-    safe_create(fs::path(output_path));
+    safe_create(fs::path(output_path), false);
     safe_create(fs::path(output_path) / fs::path("outliers"));
     safe_create(fs::path(output_path) / fs::path("inliers"));
   }
