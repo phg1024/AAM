@@ -604,8 +604,13 @@ namespace aam {
       }
       {
         boost::timer::auto_cpu_timer t("Texture model constructed in %w seconds.\n");
-        texture_model = texture_model(normalized_textures_i.reshape(1), Mat(), CV_PCA_DATA_AS_ROW, 0.98);
+        texture_model = texture_model(normalized_textures_i.reshape(1),
+                                      Mat(),
+                                      CV_PCA_DATA_AS_ROW,
+                                      0.98);
       }
+
+      PrintShape(texture_model.eigenvectors);
 
       Mat coeffs(1, texture_model.mean.cols, texture_model.mean.type()), reconstructed;
       Mat vec = textures.row(indices[i]);
@@ -655,7 +660,7 @@ namespace aam {
       cv::imshow("ref", img_ref);
 
       Mat image_i = images[indices[i]].clone();
-      DrawShape(image_i, shapes[indices[i]]);
+      DrawShape(image_i, shapes.row(indices[i]));
       cv::imshow("input", images[indices[i]]);
 
       cv::putText(warp_back, std::to_string(diffs.at<double>(0, i)), cv::Point(5, 20),
