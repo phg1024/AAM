@@ -1,6 +1,3 @@
-%% driver for AAM algorithm
-function AAMfilter(repopath, person, method, visualize_results)
-
 datapath = sprintf(repopath, person);
 settings_filename = fullfile(datapath, 'settings.txt');
 
@@ -105,10 +102,127 @@ if true%visualize_results
     figure(3);
     subplot(1,2,1);imshow(mask_sum);hold on;trimesh(mean_shape_tri0, mean_shape_verts(:,1), mean_shape_verts(:,2), ones(size(mean_shape_verts, 1), 1));
     subplot(1,2,2);imshow(mask_sum);hold on;trimesh(mean_shape_tri, mean_shape_verts(:,1), mean_shape_verts(:,2), ones(size(mean_shape_verts, 1), 1));
-    for j=1:size(mean_shape_tri,1)
-        cj = mean(mean_shape_verts(mean_shape_tri(j,:), :));
-        text(cj(1), cj(2), 1.1, num2str(j));
+%     for j=1:size(mean_shape_tri,1)
+%         cj = mean(mean_shape_verts(mean_shape_tri(j,:), :));
+%         text(cj(1), cj(2), 1.1, num2str(j));
+%     end
+%    pause;
+end
+
+% compute jabocian of warp function \frac{\mathbf W}{\mathbf p}
+figure; imshow(mask_sum);
+mask_pixels = find(mask_sum(:,:,1) > 0);
+num_triangles = size(mean_shape_tri);
+pixel_triangle_indices = zeros(h*w,1);
+alphas = zeros(h*w, 1);
+betas = zeros(h*w, 1);
+num_vertices = size(mean_shape_verts, 1);
+pw_px = cell(num_vertices, 1);
+for i=1:num_vertices
+    pw_px{i} = zeros(h*w, 1);
+end
+for j=1:num_triangles
+    triangles{j} = poly2mask(mean_shape_verts(mean_shape_tri(j,:),1), mean_shape_verts(mean_shape_tri(j,:),2), h, w);
+    pixels_in_tri_j = find(triangles{j} > 0);
+    pixel_triangle_indices(pixels_in_tri_j) = j;
+        
+    v1 = mean_shape_verts(mean_shape_tri(j,1), :);
+    v2 = mean_shape_verts(mean_shape_tri(j,2), :);
+    v3 = mean_shape_verts(mean_shape_tri(j,3), :);
+    
+    % for the first vertex
+    v2_v1 = v2 - v1;
+    v3_v1 = v3 - v1;
+    for pi=1:length(pixels_in_tri_j)
+        pixel_idx = pixels_in_tri_j(pi);
+        pi_x = min(floor(pixel_idx / h) + 1, w);
+        pi_y = mod(pixel_idx, h) + 1;
+        vi = [pi_x, pi_y];
+        vi_v1 = vi - v1;
+        denom_i = v2_v1(1)*v3_v1(2) - v3_v1(1)*v2_v1(2);
+        alphas(pixel_idx) = (vi_v1(1) * v3_v1(2) - vi_v1(2) * v3_v1(1)) / denom_i;
+        betas(pixel_idx) = (vi_v1(2) * v2_v1(1) - vi_v1(1) * v2_v1(2)) / denom_i;
+        
+        pw_px{mean_shape_tri(j,1)}(pixel_idx) = 1-alphas(pixel_idx)-betas(pixel_idx);
     end
+    
+    % for the second vertex
+    v1_v2 = v1 - v2;
+    v3_v2 = v3 - v2;
+    for pi=1:length(pixels_in_tri_j)
+        pixel_idx = pixels_in_tri_j(pi);
+        pi_x = min(floor(pixel_idx / h) + 1, w);
+        pi_y = mod(pixel_idx, h) + 1;
+        vi = [pi_x, pi_y];
+        vi_v2 = vi - v2;
+        denom_i = v1_v2(1)*v3_v2(2) - v3_v2(1)*v1_v2(2);
+        alphas(pixel_idx) = (vi_v2(1) * v3_v2(2) - vi_v2(2) * v3_v2(1)) / denom_i;
+        betas(pixel_idx) = (vi_v2(2) * v1_v2(1) - vi_v2(1) * v1_v2(2)) / denom_i;
+        
+        pw_px{mean_shape_tri(j,2)}(pixel_idx) = 1-alphas(pixel_idx)-betas(pixel_idx);
+    end
+    
+    % for the third vertex
+    v1_v3 = v1 - v3;
+    v2_v3 = v2 - v3;
+    for pi=1:length(pixels_in_tri_j)
+        pixel_idx = pixels_in_tri_j(pi);
+        pi_x = min(floor(pixel_idx / h) + 1, w);
+        pi_y = mod(pixel_idx, h) + 1;
+        vi = [pi_x, pi_y];
+        vi_v3 = vi - v3;
+        denom_i = v1_v3(1)*v2_v3(2) - v2_v3(1)*v1_v3(2);
+        alphas(pixel_idx) = (vi_v3(1) * v2_v3(2) - vi_v3(2) * v2_v3(1)) / denom_i;
+        betas(pixel_idx) = (vi_v3(2) * v1_v3(1) - vi_v3(1) * v1_v3(2)) / denom_i;
+        
+        pw_px{mean_shape_tri(j,3)}(pixel_idx) = 1-alphas(pixel_idx)-betas(pixel_idx);
+    end    
+end
+pw_py = pw_px;  % the only difference is that pw_px is valid for x channel and pw_py is valid for y channel
+figure;imshow(reshape(pixel_triangle_indices, h, w)/255.0+0.5);
+for i=1:num_vertices
+    figure(3);clf;
+    imshow(reshape(pw_px{i}, h, w));title(['pw\_px ', num2str(i)]); 
+    hold on;
+    trimesh(mean_shape_tri, mean_shape_verts(:,1), mean_shape_verts(:,2), ones(1,num_vertices), 'facecolor', 'none', 'edgecolor', [.5 .5 .75]);
+    plot(mean_shape_verts(i, 1), mean_shape_verts(i, 2), 'g.');
+    pause;
+end
+
+% compute the jacobian of each shape component
+num_shape_components = size(model.shape.P, 2);
+px_pp = zeros(num_vertices, num_shape_components); 
+py_pp = zeros(num_vertices, num_shape_components);
+for i=1:num_vertices
+    for j=1:num_shape_components
+        px_pp(i,j) = model.shape.P(2*(i-1)+1, j);
+        py_pp(i,j) = model.shape.P(2*(i-1)+2, j);
+    end
+end
+
+% visualize the composite jacobian for each shape mode
+for j=1:num_shape_components
+    pw_pp_x = zeros(h*w, 1);
+    pw_pp_y = zeros(h*w, 1);
+    for i=1:num_vertices
+        pw_pp_x = pw_pp_x + pw_px{i} * px_pp(i,j);
+        pw_pp_y = pw_pp_y + pw_py{i} * py_pp(i,j);
+    end
+    figure(3);clf;
+    subplot(1,3,1);imshow(reshape(pw_pp_x, h, w));hold on;
+    trimesh(mean_shape_tri, mean_shape_verts(:,1), mean_shape_verts(:,2), ones(1,num_vertices), 'facecolor', 'none', 'edgecolor', [.5 .5 .75]);
+    for i=1:num_vertices
+        vsi_x = model.shape.P(2*(i-1)+1, j) * 100;
+        vsi_y = model.shape.P(2*(i-1)+2, j) * 100;
+        
+        line([mean_shape_verts(i,1), mean_shape_verts(i,1) + vsi_x], ...
+             [mean_shape_verts(i,2), mean_shape_verts(i,2) + vsi_y]);
+        line([mean_shape_verts(i,1), mean_shape_verts(i,1) - vsi_x], ...
+             [mean_shape_verts(i,2), mean_shape_verts(i,2) - vsi_y], 'Color', [1, 0, 0]);
+    end
+    
+    subplot(1,3,2);imagesc(reshape(pw_pp_x, h, w));axis equal;
+    subplot(1,3,3);imagesc(reshape(pw_pp_y, h, w));axis equal;
     pause;
 end
 

@@ -2,7 +2,7 @@ clear;
 close all;
 visualize_results = false;
 
-method = 'tournament';
+method = 'fitting';
 repopath = '~/Data/InternetRecon3/%s';
 person = 'Andy_Lau';
 %person = 'Benedict_Cumberbatch';
@@ -15,4 +15,4 @@ for i=1:length(files)
     delete(fullfile(method, files(i).name));
 end
 
-AAMfilter(repopath, person, method, false);
+AAMfilter_script;
