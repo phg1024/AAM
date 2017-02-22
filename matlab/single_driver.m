@@ -15,4 +15,4 @@ for i=1:length(files)
     delete(fullfile(method, files(i).name));
 end
 
-AAMfilter_script;
+AAM_script;

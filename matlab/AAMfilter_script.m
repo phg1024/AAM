@@ -2,6 +2,7 @@ datapath = sprintf(repopath, person);
 settings_filename = fullfile(datapath, 'settings.txt');
 
 [all_images, all_points] = read_settings(settings_filename);
+num_images = length(all_images);
 
 for i=1:length(all_images)
     I{i} = imread(fullfile(datapath, all_images{i}));
@@ -58,6 +59,20 @@ num_modes = find(total_explained>98, 1, 'first');
 model.shape.num_modes = num_modes;
 model.shape.x = mean_shape;
 model.shape.P = coeff(:, 1:num_modes);
+
+% compute global transformation basis
+model.shape.s0 = mean_shape;
+model.shape.ss_1 = model.shape.s0;
+model.shape.ss_2 = reshape(mean_shape, 2, []);
+model.shape.ss_2 = [-model.shape.ss_2(2,:);model.shape.ss_2(1,:)];
+model.shape.ss_2 = reshape(model.shape.ss_2, [], 1);
+model.shape.ss_3 = zeros(length(mean_shape), 1);
+model.shape.ss_3(1:2:end) = 1;
+model.shape.ss_4 = zeros(length(mean_shape), 1);
+model.shape.ss_4(2:2:end) = 1;
+model.shape.s_star = [model.shape.ss_1, model.shape.ss_2, model.shape.ss_3, model.shape.ss_4];
+model.shape.s = model.shape.P;
+% TODO we may need to orthogonalize s and s_star
 
 % create warping
 tic;
@@ -193,10 +208,16 @@ end
 num_shape_components = size(model.shape.P, 2);
 px_pp = zeros(num_vertices, num_shape_components); 
 py_pp = zeros(num_vertices, num_shape_components);
+px_pq = zeros(num_vertices, 4);
+py_pq = zeros(num_vertices, 4);
 for i=1:num_vertices
     for j=1:num_shape_components
         px_pp(i,j) = model.shape.P(2*(i-1)+1, j);
         py_pp(i,j) = model.shape.P(2*(i-1)+2, j);
+    end
+    for j=1:4
+        px_pq(i,j) = model.shape.s_star(2*(i-1)+1, j);
+        py_pq(i,j) = model.shape.s_star(2*(i-1)+2, j);
     end
 end
 
@@ -283,6 +304,62 @@ if true%visualize_results
     figure(4);imshow(mean_texture);title('mean texture');pause;
 end
 toc;
+
+% compute A0 and dA0
+tic;
+[mean_r, mean_g, mean_b] = split_channels(mean_texture);
+mean_grad_r = gradient(mean_r); mean_grad_r(~mean_shape_region) = 0;
+mean_grad_g = gradient(mean_g); mean_grad_g(~mean_shape_region) = 0;
+mean_grad_b = gradient(mean_b); mean_grad_b(~mean_shape_region) = 0;
+mean_grad = cat(3, mean_grad_r, mean_grad_g, mean_grad_b);
+
+model.A0 = mean_texture;
+model.dA0 = mean_grad;
+
+figure;subplot(1,2,1);imshow(model.A0);
+subplot(1,2,2);imshow(model.dA0);pause;
+toc;
+
+% compute appearance model
+tic;
+app_matrix = zeros(h*w*3, num_images);
+for i=1:length(I)
+    app_matrix(:,i) = reshape(warped{i}, [], 1);
+end
+app_matrix = app_matrix - repmat(reshape(model.A0, [], 1), 1, num_images);
+
+addpath inexact_alm_rpca/
+addpath inexact_alm_rpca/PROPACK/
+
+app_matrix_low_rank = inexact_alm_rpca(app_matrix);
+
+[coeff, score, latent, tsquared, explained] = pca(app_matrix_low_rank');
+total_explained = cumsum(explained);
+num_modes = find(total_explained>98, 1, 'first');
+model.A_nmodes = num_modes;
+model.A = coeff(:,1:num_modes);
+model.A_eiv = latent(1:num_modes);
+toc;
+
+% compute steepest descent images
+tic;
+app_modes = reshape(model.A, [h w 3 num_modes]);
+for i=1:num_modes
+    figure(5);imshow(app_modes(:,:,:,i)*255);pause;
+end
+
+SD = zeros(h, w, 3, 4 + num_vertices);
+for i=1:4
+    prj_diff = zeros(3, num_modes);
+    for j=1:num_modes
+        for c=1:3
+            %prj_diff(c,j) = sum(sum(app_modes(:,:,c,j) .* ()));
+        end
+    end
+end
+
+toc;
+
 
 tic;
 [mean_r, mean_g, mean_b] = split_channels(mean_texture);
