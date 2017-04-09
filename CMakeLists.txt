@@ -72,6 +72,14 @@ target_link_libraries(aammodel
         Qt5::OpenGL
         Qt5::Test)
 
+add_library(fpevaluater fpevaluater.cpp features/vl_hog.cpp)
+target_link_libraries(fpevaluater
+        ioutils
+        Qt5::Core
+        Qt5::Widgets
+        Qt5::OpenGL
+        Qt5::Test)
+
 # Single image reconstruction program
 add_executable(AAMFilter aamfilter.cpp common.h ioutils.h utils.h)
 target_link_libraries(AAMFilter
@@ -82,4 +90,15 @@ target_link_libraries(AAMFilter
         Qt5::OpenGL
         Qt5::Test)
 
+# Single image reconstruction program
+add_executable(FPFilter fpfilter.cpp common.h ioutils.h utils.h)
+target_link_libraries(FPFilter
+        ioutils
+        fpevaluater
+        Qt5::Core
+        Qt5::Widgets
+        Qt5::OpenGL
+        Qt5::Test)
+
 add_subdirectory(tests)
+#add_subdirectory(superviseddescent)

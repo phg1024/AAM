@@ -30,6 +30,22 @@ namespace aam {
     return mat;
   }
 
+  inline cv::Mat QImage2CVMatU(const QImage& img) {
+    cv::Mat mat(img.width(), img.height(), CV_8UC3, cv::Scalar(0));
+
+    for(int i=0;i<img.height();++i) {
+      for(int j=0;j<img.width();++j) {
+        auto pij = img.pixel(j, i);
+
+        // OpenCV uses BGR format, while QImage is RGB
+        cv::Vec3b pix(qBlue(pij), qGreen(pij), qRed(pij));
+        mat.at<cv::Vec3b>(i, j) = pix;
+      }
+    }
+
+    return mat;
+  }
+
   inline void DrawShape(cv::Mat& img, const cv::Mat& shape) {
     const int npoints = shape.cols / 2;
     for(int j=0;j<npoints;++j) {
@@ -237,4 +253,3 @@ namespace aam {
     return sqrt(e / count);
   }
 }
-
