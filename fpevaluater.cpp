@@ -2,6 +2,7 @@
 #include "utils.h"
 
 #include "features/vl_hog.h"
+#include "robust_pca/robust_pca.h"
 
 using namespace std;
 using namespace cv;
@@ -225,12 +226,30 @@ void FeaturePointsEvaluater::Evaluate() const {
     vector<pair<int, double>> error(nimages);
     for(int i=0;i<nimages;++i) error[i] = make_pair(i, 0);
 
+    #pragma omp parallel for
     for(int i=0;i<npoints;++i) {
       //cout << "patch " << i << endl;
-      // construct PCA model
-      patch_models[i] = patch_models[i](patches_db[i], Mat(), CV_PCA_DATA_AS_ROW, 0.5);
 
-      // reconstruct patch
+      // Clean up the matrix with robust pca
+      Eigen::MatrixXf D, A, E;
+
+      D = CVMat2EigenMatrix(patches_db[i]);
+
+      sp::ml::robust_pca(D, A, E);
+
+      // Copy back the recovered data
+      for(int r=0;r<patches_db[i].rows;++r) {
+        for(int c=0;c<patches_db[i].cols;++c) {
+          patches_db[i].at<float>(r, c) = A(r, c);
+        }
+      }
+
+      // construct PCA model
+      patch_models[i] = patch_models[i](patches_db[i], Mat(), CV_PCA_DATA_AS_ROW, 0.75);
+    }
+
+    // reconstruct patches
+    for(int i=0;i<npoints;++i){
       for(int j=0;j<nimages;++j) {
         Mat coeffs(1, patch_models[i].mean.cols, patch_models[i].mean.type());
         patch_models[i].project(patches_db[i].row(j), coeffs);

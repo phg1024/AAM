@@ -62,15 +62,7 @@ int main(int argc, char** argv) {
 
   if(vm["mode"].as<string>() == "filter"){
     boost::timer::auto_cpu_timer t("Outlier detection finished in %w seconds.\n");
-    vector<int> indices;
-    while(true) {
-      int sz = indices.size();
-      {
-        boost::timer::auto_cpu_timer t("Iteration finished in %w seconds.\n");
-        indices = model.FindInliers(indices);
-      }
-      if(sz == indices.size()) break;
-    }
+    vector<int> indices = model.FindInliers_Iterative();
   } else if(vm["mode"].as<string>() == "build") {
     model.BuildModel();
   }

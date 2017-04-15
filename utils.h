@@ -46,6 +46,33 @@ namespace aam {
     return mat;
   }
 
+  template <typename ValueType = float>
+  Eigen::Matrix<ValueType, Eigen::Dynamic, Eigen::Dynamic>
+  CVMat2EigenMatrix(const cv::Mat& m0) {
+    assert(m0.type() == cv::DataType<ValueType>::type);
+    Eigen::Matrix<ValueType, Eigen::Dynamic, Eigen::Dynamic> m(m0.rows, m0.cols);
+
+    for(int i=0;i<m0.rows;++i) {
+      for(int j=0;j<m0.cols;++j) {
+        m(i, j) = m0.at<ValueType>(i, j);
+      }
+    }
+
+    return m;
+  }
+
+  template <typename ValueType = float>
+  cv::Mat EigenMatrix2CVMat(const Eigen::Matrix<ValueType, Eigen::Dynamic, Eigen::Dynamic>& m0) {
+    cv::Mat m(m0.rows(), m0.cols(), cv::DataType<ValueType>::type);
+
+    for(int i=0;i<m0.rows();++i) {
+      for(int j=0;j<m0.cols();++j) {
+        m.at<ValueType>(i, j) = m0(i, j);
+      }
+    }
+    return m;
+  }
+
   inline void DrawShape(cv::Mat& img, const cv::Mat& shape) {
     const int npoints = shape.cols / 2;
     for(int j=0;j<npoints;++j) {

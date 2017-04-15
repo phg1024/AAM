@@ -9,6 +9,11 @@ namespace aam {
       TextureError = 0,
       FittingError
     };
+
+    enum Method {
+      LeaveOneOut,
+      RobustPCA
+    };
   public:
     AAMModel();
     AAMModel(const std::vector<QImage>& images, const std::vector<cv::Mat>& points);
@@ -27,8 +32,10 @@ namespace aam {
     void InitializeMeanShapeAndTexture();
 
     void BuildModel(std::vector<int> indices = std::vector<int>());
+    std::vector<int> FindInliers_Iterative(std::vector<int> indices = std::vector<int>(), Method method = RobustPCA);
+
     std::vector<int> FindInliers(std::vector<int> indices = std::vector<int>());
-    std::vector<int> FindInliers_Iterative(std::vector<int> indices = std::vector<int>());
+    std::vector<int> FindInliers_RPCA(std::vector<int> indices = std::vector<int>());
 
   protected:
     void Init();
@@ -77,4 +84,3 @@ namespace aam {
     ErrorMetric metric;
   };
 }
-
