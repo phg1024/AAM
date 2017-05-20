@@ -16,7 +16,8 @@ int main(int argc, char** argv) {
   desc.add_options()
     ("settings_file", po::value<string>()->required(), "Input settings file")
     ("output_path", po::value<string>()->default_value("."), "Output folder")
-    ("mode", po::value<string>()->default_value("filter"), "Mode to run");
+    ("mode", po::value<string>()->default_value("filter"), "Mode to run")
+    ("threshold", po::value<double>()->default_value(2.0), "Threshold for outlier");
 
   po::variables_map vm;
 

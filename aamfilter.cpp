@@ -16,7 +16,8 @@ int main(int argc, char** argv) {
   desc.add_options()
     ("settings_file", po::value<string>()->required(), "Input settings file")
     ("output_path", po::value<string>()->default_value("."), "Output folder")
-    ("mode", po::value<string>()->default_value("filter"), "Mode to run");
+    ("mode", po::value<string>()->default_value("filter"), "Mode to run")
+    ("threshold", po::value<double>()->default_value(2.0), "Threshold for outlier");
 
   po::variables_map vm;
 
@@ -58,7 +59,8 @@ int main(int argc, char** argv) {
 
   AAMModel model(images, points);
   model.SetOutputPath(vm["output_path"].as<string>());
-  model.SetErrorMetric(AAMModel::FittingError);
+  model.SetErrorMetric(AAMModel::Hybrid);
+  model.SetThreshold(vm["threshold"].as<double>());
 
   if(vm["mode"].as<string>() == "filter"){
     boost::timer::auto_cpu_timer t("Outlier detection finished in %w seconds.\n");

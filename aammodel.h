@@ -7,7 +7,8 @@ namespace aam {
   public:
     enum ErrorMetric {
       TextureError = 0,
-      FittingError
+      FittingError,
+      Hybrid
     };
 
     enum Method {
@@ -24,6 +25,9 @@ namespace aam {
     void SetOutputPath(const std::string& path);
     void SetErrorMetric(ErrorMetric m) {
       metric = m;
+    }
+    void SetThreshold(double val) {
+      threshold = val;
     }
 
     void Preprocess();
@@ -82,5 +86,6 @@ namespace aam {
     cv::Mat meanshape, meantexture;
 
     ErrorMetric metric;
+    double threshold;
   };
 }

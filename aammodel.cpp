@@ -37,6 +37,7 @@ namespace aam {
 
   void AAMModel::Init() {
     metric = TextureError;
+    threshold = 2.0;
 
     triangles = LoadTriangulation("/home/phg/Data/Multilinear/landmarks_triangulation.dat");
     // Convert to 0-based indexing
@@ -760,6 +761,9 @@ namespace aam {
     set<int> current_set(indices.begin(), indices.end());
 
     vector<Mat> reconstructions(nimages), fitted_images(nimages);
+
+    Mat diffs_tex(1, nimages, CV_64FC1);
+    Mat diffs_fit(1, nimages, CV_64FC1);
     Mat diffs(1, nimages, CV_64FC1);
 
     // Perform RPCA on both shapes and texture
@@ -835,7 +839,7 @@ namespace aam {
       Mat fitted, warp_back;
       switch(metric) {
         case TextureError: {
-          diffs.at<double>(0, i) = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
+          diffs_tex.at<double>(0, i) = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);
           break;
         }
         case FittingError: {
@@ -846,14 +850,29 @@ namespace aam {
           FillImage(reconstructions[i], pixel_coords, fitted);
           warp_back = WarpImage(fitted, tforms[indices[i]], inv_pixel_mats[indices[i]], inv_pixel_coords[indices[i]]);
           fitted_images[i] = warp_back;
-          diffs.at<double>(0, i) = ComputeRMSE(warp_back, images[indices[i]], inv_pixel_coords[indices[i]]);
+          diffs_fit.at<double>(0, i) = ComputeRMSE(warp_back, images[indices[i]], inv_pixel_coords[indices[i]]);
+          break;
+        }
+        case Hybrid:{
+          // Compute texture error
+          double E_tex = cv::norm(normalized_vec, reconstructed, cv::NORM_L2);;
+
+          // Compute fitting error
+          fitted = Mat(images.front().rows, images.front().cols, images.front().type(), cv::Scalar(0, 0, 0));
+          FillImage(reconstructions[i], pixel_coords, fitted);
+          warp_back = WarpImage(fitted, tforms[indices[i]], inv_pixel_mats[indices[i]], inv_pixel_coords[indices[i]]);
+          fitted_images[i] = warp_back;
+          double E_fit = ComputeRMSE(warp_back, images[indices[i]], inv_pixel_coords[indices[i]]);
+
+          diffs_tex.at<double>(0, i) = E_tex;
+          diffs_fit.at<double>(0, i) = E_fit;
           break;
         }
         default:
           break;
       }
 
-      printf("%d. diff = %g\n", i, diffs.at<double>(0, i));
+      //printf("%d. diff = %g\n", i, diffs.at<double>(0, i));
 
     #if 0
       cv::imshow("fitted", fitted);
@@ -874,9 +893,17 @@ namespace aam {
     #endif
     }
 
+    cv::Scalar mean_diff_tex, stddev_diff_tex;
+    cv::meanStdDev(diffs_tex, mean_diff_tex, stddev_diff_tex);
+
+    cv::Scalar mean_diff_fit, stddev_diff_fit;
+    cv::meanStdDev(diffs_fit, mean_diff_fit, stddev_diff_fit);
+
+    cout << mean_diff_tex << ", " << stddev_diff_tex << endl;
+    cout << mean_diff_fit << ", " << stddev_diff_fit << endl;
+
     cv::Scalar mean_diff, stddev_diff;
     cv::meanStdDev(diffs, mean_diff, stddev_diff);
-
     cout << mean_diff << ", " << stddev_diff << endl;
 
     // always create a new inlier directory
@@ -886,7 +913,26 @@ namespace aam {
     for(int i=0;i<nimages;++i) {
       int max_idx = indices[i];
 
-      if(diffs.at<double>(0, i) >= mean_diff[0] + 2 * stddev_diff[0]) {
+      bool should_exclude = false;
+      switch(metric) {
+        case TextureError: {
+          should_exclude = diffs_tex.at<double>(0, i) >= mean_diff_tex[0] + threshold * stddev_diff_tex[0];
+          break;
+        }
+        case FittingError: {
+          should_exclude = diffs_fit.at<double>(0, i) >= mean_diff_fit[0] + threshold * stddev_diff_fit[0];
+          break;
+        }
+        case Hybrid: {
+          should_exclude |= diffs_tex.at<double>(0, i) >= mean_diff_tex[0] + threshold * stddev_diff_tex[0];
+          should_exclude |= diffs_fit.at<double>(0, i) >= mean_diff_fit[0] + threshold * stddev_diff_fit[0];
+          break;
+        }
+        default:
+          break;
+      }
+
+      if(should_exclude) {
         cout << "outlier: " << max_idx << endl;
         Mat img_i = images[max_idx].clone();
         DrawShape(img_i, shapes.row(max_idx));
