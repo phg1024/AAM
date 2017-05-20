@@ -1,7 +1,7 @@
 function [A_hat E_hat iter] = inexact_alm_rpca(D, lambda, tol, maxIter)
 
 % Oct 2009
-% This matlab code implements the inexact augmented Lagrange multiplier 
+% This matlab code implements the inexact augmented Lagrange multiplier
 % method for Robust PCA.
 %
 % D - m x n matrix of observations/data (required input)
@@ -13,16 +13,16 @@ function [A_hat E_hat iter] = inexact_alm_rpca(D, lambda, tol, maxIter)
 %
 % maxIter - maximum number of iterations
 %         - DEFAULT 1000, if omitted or -1.
-% 
+%
 % Initialize A,E,Y,u
-% while ~converged 
+% while ~converged
 %   minimize (inexactly, update A and E only once)
 %     L(A,E,Y,u) = |A|_* + lambda * |E|_1 + <Y,D-A-E> + mu/2 * |D-A-E|_F^2;
 %   Y = Y + \mu * (D - A - E);
 %   \mu = \rho * \mu;
 % end
 %
-% Minming Chen, October 2009. Questions? v-minmch@microsoft.com ; 
+% Minming Chen, October 2009. Questions? v-minmch@microsoft.com ;
 % Arvind Ganesh (abalasu2@illinois.edu)
 %
 % Copyright: Perception and Decision Laboratory, University of Illinois, Urbana-Champaign
@@ -30,7 +30,7 @@ function [A_hat E_hat iter] = inexact_alm_rpca(D, lambda, tol, maxIter)
 
 addpath ./PROPACK/;
 
-[m n] = size(D);
+[m n] = size(D)
 
 if nargin < 2
     lambda = 1 / sqrt(m);
@@ -67,49 +67,54 @@ total_svd = 0;
 converged = false;
 stopCriterion = 1;
 sv = 10;
-while ~converged       
+while ~converged
     iter = iter + 1;
-    
+
     temp_T = D - A_hat + (1/mu)*Y;
     E_hat = max(temp_T - lambda/mu, 0);
     E_hat = E_hat+min(temp_T + lambda/mu, 0);
 
+    tic;
     if choosvd(n, sv) == 1
+        disp('using lansvd');
         [U S V] = lansvd(D - E_hat + (1/mu)*Y, sv, 'L');
     else
+        disp('using svd econ');
         [U S V] = svd(D - E_hat + (1/mu)*Y, 'econ');
     end
+    toc;
+    
     diagS = diag(S);
-    svp = length(find(diagS > 1/mu));
+    svp = length(find(diagS > 1/mu))
     if svp < sv
         sv = min(svp + 1, n);
     else
         sv = min(svp + round(0.05*n), n);
     end
-    
-    A_hat = U(:, 1:svp) * diag(diagS(1:svp) - 1/mu) * V(:, 1:svp)';    
+
+    A_hat = U(:, 1:svp) * diag(diagS(1:svp) - 1/mu) * V(:, 1:svp)';
 
     total_svd = total_svd + 1;
-    
+
     Z = D - A_hat - E_hat;
-    
+
     Y = Y + mu*Z;
     mu = min(mu*rho, mu_bar);
-        
-    %% stop Criterion    
+
+    %% stop Criterion
     stopCriterion = norm(Z, 'fro') / d_norm;
     if stopCriterion < tol
         converged = true;
-    end    
-    
+    end
+
     if mod( total_svd, 10) == 0
         disp(['#svd ' num2str(total_svd) ' r(A) ' num2str(rank(A_hat))...
             ' |E|_0 ' num2str(length(find(abs(E_hat)>0)))...
             ' stopCriterion ' num2str(stopCriterion)]);
-    end    
-    
+    end
+
     if ~converged && iter >= maxIter
         disp('Maximum iterations reached') ;
-        converged = 1 ;       
+        converged = 1 ;
     end
 end

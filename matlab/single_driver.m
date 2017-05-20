@@ -3,11 +3,14 @@ close all;
 visualize_results = false;
 
 method = 'fitting';
-repopath = '~/Data/InternetRecon3/%s';
+repopath = '~/Storage/Data/InternetRecon3/%s';
 person = 'Andy_Lau';
+%person = 'George_W_Bush';
+%person = 'Hillary_Clinton';
+%person = 'Zhang_Ziyi';
 %person = 'Benedict_Cumberbatch';
 %person = 'Donald_Trump';
-%person = 'George_W_Bush';
+
 
 files = dir(fullfile(method, [person, '*']));
 for i=1:length(files)
@@ -15,4 +18,7 @@ for i=1:length(files)
     delete(fullfile(method, files(i).name));
 end
 
-AAM_script;
+method = 'robustpca';
+AAMfilter_script;
+
+%AAM_script;
